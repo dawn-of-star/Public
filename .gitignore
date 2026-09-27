@@ -4,6 +4,9 @@ node_modules/
 # ── 打包产物（electron-builder 输出目录）──
 release/
 
+# ── 网页版组装产物（GitHub Pages 部署前临时生成）──
+_site/
+
 # ── 编辑器 / 系统 ──
 .vscode/*.local.json
 .DS_Store

@@ -10,9 +10,12 @@
 
 | 你想干嘛 | 用什么 | 需要装什么 |
 |---|---|---|
-| **只想玩** | 下载 Release 里的 `CosmosOrigin-0.4.5-win-x64-便携版.exe` | **什么都不用装**，双击即玩 |
-| 在浏览器里玩 | `node serve.mjs` → http://127.0.0.1:8321/ | Node.js |
-| 改代码 / 自己打包 | 见下面「本地开发」和「打包成 exe」 | Node.js + 首次 `npm install` |
+| **点开就玩（最省事）** | **https://dawn-of-star.github.io/Public/** | 只需要浏览器 |
+| **下载到本地玩** | Release 里的 `CosmosOrigin-0.4.5-win-x64.exe` | **什么都不用装**，双击即玩 |
+| 在本机改着玩 | `node serve.mjs` → http://127.0.0.1:8321/ | Node.js |
+| 改代码 / 自己打包 | 见下面「打包成 exe」 | Node.js + 首次 `npm install` |
+
+> 网页版和 exe 版是**两份独立存档**（`localStorage` 按源隔离），互不相通。
 
 > 便携版 exe 里已经打进了完整的 Chromium 内核，**不依赖系统 WebView2、不依赖 Node、
 > 不依赖任何运行库**，Windows 10 1809+ / 11（x64）都能直接双击运行。
@@ -105,7 +108,7 @@ npm run dist         # 产出 release/ 下的便携版 exe + zip
 
 | 文件 | 说明 |
 |---|---|
-| `release/CosmosOrigin-0.4.5-win-x64-便携版.exe` | **给玩家的推荐版本**。单个自解压 exe，双击即玩，卸载就是删文件 |
+| `release/CosmosOrigin-0.4.5-win-x64.exe` | **给玩家的推荐版本**。单个自解压 exe，双击即玩，卸载就是删文件 |
 | `release/CosmosOrigin-0.4.5-win-x64.zip` | 解压即用的绿色目录。部分杀软会误报自解压包，备一个这个 |
 
 想快速验证打包有没有问题，用 `npm run dist:dir`（只出 `release/win-unpacked/`，几十秒）。
@@ -185,6 +188,48 @@ git push origin v0.4.5
 几分钟后仓库的 **Releases** 页面就有一个可下载的 exe，把那个链接发给别人就行。
 
 > 也可以不依赖 Actions，在本机 `npm run dist` 后在 Release 页面手动拖拽上传。两条路都通。
+
+---
+
+## 部署到 GitHub Pages（在线直接玩）
+
+线上地址：**https://dawn-of-star.github.io/Public/**
+
+推一下 `master` 就会自动重新部署。**首次需要手动开一下**（一次性，10 秒）：
+
+> 仓库页 → **Settings** → 左侧 **Pages** → Build and deployment → **Source** 选 **GitHub Actions**
+
+工作流里的 `configure-pages` 带了 `enablement: true` 会尝试自动开启，但那一步依赖
+`GITHUB_TOKEN` 的权限，未必成功 —— **手动开是最稳的**，开完再推一次即可。
+
+### 为什么不能直接把整个仓库发布出去
+
+发布前要先挑文件。游戏真正需要的只有 4 个：`index.html`、`css/`、`src/`、`dist/`。
+`legacy/`（0.3.4 原稿）、`tools/`（20 个开发脚本）、`electron/`、`build/` 都不该公开可访问。
+
+`tools/check-web-bundle.cjs` 负责这件事，它做两步：
+
+1. **只把白名单里的 4 项复制到 `_site/`**，然后只发布 `_site/`
+2. **把整张 import 图从 `index.html` 走一遍**，任何一个被引用却不存在的文件都直接报错
+
+第 2 步才是关键。ES 模块少一个文件就是**整页白屏**，而且**只在线上白屏** ——
+本地 `serve.mjs` 跑的是完整仓库，永远看不出问题。
+
+```bash
+npm run check:web     # 本地先跑一遍，等价于 CI 里那步
+```
+
+它会顺带查出「大小写写错」这类问题：GitHub Pages 跑在 Linux 上**大小写敏感**，
+Windows 本地不敏感，所以 `import "./Formulas.js"` 这种错在你机器上一切正常、一上线就白屏。
+
+> ⚠️ 脚本里的 `FILES` 白名单必须和 `package.json` 里的 `build.files` 保持一致。
+> 两边不一致的典型后果：**exe 能玩、网页白屏**，或者反过来。
+
+### 网页版和 exe 版的存档不互通
+
+浏览器版跑在 `dawn-of-star.github.io` 源下，exe 版跑在 `app://game` 源下，
+`localStorage` 按源隔离，所以是**两份独立存档**。
+想搬存档目前只能靠「导出存档」按钮（复制到剪贴板），还没有导入功能。
 
 ---
 

@@ -1,0 +1,86 @@
+# ═══════════════════════════════════════════════════════════
+# 部署到 GitHub Pages —— 让别人点链接直接在浏览器里玩
+#
+# 部署完的地址：
+#   https://dawn-of-star.github.io/Public/
+#
+# 触发方式：
+#   · 往 master 分支推代码（自动重新部署）
+#   · 或在 GitHub 网页 Actions → 部署到 GitHub Pages → Run workflow
+#
+# ⚠️ 首次使用需要先去仓库开一下 Pages：
+#   Settings → Pages → Build and deployment → Source 选「GitHub Actions」
+#   下面 configure-pages 带了 enablement: true 会尝试自动开启，但那一步
+#   依赖 GITHUB_TOKEN 的权限，未必成功；手动开是最稳的。
+#
+# ═══════════════════════════════════════════════════════════
+# 组装和校验都在 tools/check-web-bundle.cjs 里
+# ═══════════════════════════════════════════════════════════
+# 为什么不在工作流里直接 cp：
+#   1. 只发布 index.html / css/ / src/ / dist/ 四个，不能把整个仓库推上去
+#      （legacy/ 原稿和 tools/ 20 个开发脚本不该公开访问）
+#   2. ES 模块少一个文件就是整页白屏，而且**只在线上白屏** ——
+#      本地开发服务器跑的是完整仓库，永远看不出问题。
+#      那个脚本会把 import 图走一遍，缺文件直接在推送前失败。
+#   3. 同一个脚本本地也能跑（node tools/check-web-bundle.cjs），
+#      白名单只维护一份，不会 CI 和本地各写一套然后对不上。
+# ═══════════════════════════════════════════════════════════
+
+name: 部署到 GitHub Pages
+
+on:
+  push:
+    branches:
+      - master   # ← 你的仓库默认分支是 master（不是 main），写成 main 就不会触发
+      - main     # 万一以后改名了也还能用
+  workflow_dispatch:
+
+# Pages 部署需要这三个权限：
+#   contents: read  → 读代码
+#   pages: write    → 写 Pages
+#   id-token: write → OIDC 令牌，deploy-pages 靠它证明身份
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# 同一时间只跑一个部署；新推送取消排队中的旧部署
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: 组装静态站点
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 组装 + 校验网页版产物
+        run: node tools/check-web-bundle.cjs _site
+
+      - name: 配置 Pages
+        uses: actions/configure-pages@v5
+        with:
+          enablement: true
+
+      - name: 上传站点产物
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: 发布
+    needs: build
+    runs-on: ubuntu-latest
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: 部署到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

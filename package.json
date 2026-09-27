@@ -13,6 +13,7 @@
     "electron": "electron .",
     "smoke": "node tools/smoke-protocol.cjs",
     "smoke:electron": "electron --no-sandbox tools/smoke-electron.cjs",
+    "check:web": "node tools/check-web-bundle.cjs",
     "dist": "electron-builder --win --x64 --publish never",
     "dist:dir": "electron-builder --win --x64 --dir --publish never"
   },
