@@ -1,0 +1,70 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "dev-server",
+      "detail": "启动零依赖静态服务器（serve.mjs），供浏览器通过 http:// 访问",
+      "type": "shell",
+      "command": "node",
+      "args": ["serve.mjs"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated",
+        "clear": true,
+        "group": "dev"
+      },
+      "problemMatcher": {
+        "owner": "dev-server",
+        "pattern": [{ "regexp": "(?!)" }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "\\[serve\\]",
+          "endsPattern": "\\[serve\\] ready"
+        }
+      }
+    },
+    {
+      "label": "桌面端调试（Electron 窗口）",
+      "detail": "用 Electron 打开游戏，和打包后的 exe 行为一致。F12 开开发者工具。",
+      "type": "shell",
+      "command": "npm.cmd",
+      "args": ["run", "electron"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "打包 exe（快速，仅解压目录）",
+      "detail": "只生成 release/win-unpacked/，几十秒出结果，用于验证打包是否正常",
+      "type": "shell",
+      "command": "npm.cmd",
+      "args": ["run", "dist:dir"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "打包 exe（正式，出便携版 + zip）",
+      "detail": "生成 release/ 下的便携版 exe 和 zip，可直接上传到 GitHub Release",
+      "type": "shell",
+      "command": "npm.cmd",
+      "args": ["run", "dist"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "group": { "kind": "build", "isDefault": true },
+      "presentation": { "reveal": "always", "panel": "dedicated", "clear": true },
+      "problemMatcher": []
+    },
+    {
+      "label": "重新生成图标",
+      "detail": "改完 build/make-icon.py 的配色后重新生成 build/icon.ico",
+      "type": "shell",
+      "command": "python",
+      "args": ["build/make-icon.py"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "shared", "clear": true },
+      "problemMatcher": []
+    }
+  ]
+}

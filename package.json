@@ -1,0 +1,63 @@
+{
+  "name": "cosmos-origin",
+  "version": "0.4.5",
+  "private": true,
+  "description": "宇宙起源 —— 网页增量游戏（原生 ES 模块 + break_eternity.js，零构建）",
+  "type": "module",
+  "main": "electron/main.cjs",
+  "author": "Cosmos Origin",
+  "license": "MIT",
+  "scripts": {
+    "serve": "node serve.mjs",
+    "start": "node serve.mjs",
+    "electron": "electron .",
+    "smoke": "node tools/smoke-protocol.cjs",
+    "smoke:electron": "electron --no-sandbox tools/smoke-electron.cjs",
+    "dist": "electron-builder --win --x64 --publish never",
+    "dist:dir": "electron-builder --win --x64 --dir --publish never"
+  },
+  "//为什么没有 dependencies": "游戏本体零依赖：break_eternity.js 已经以 dist/ 的形式内置，src/ 直接 import 它。只想玩网页版的话完全不用 npm install。",
+  "//为什么需要 devDependencies": "只有「打包成 exe」和「桌面端调试」才需要 electron / electron-builder。",
+  "//为什么需要 serve": "index.html 里的 src/main.js 是 type=\"module\"，file:// 协议下会被 CORS 拦掉，必须走 HTTP。Electron 里由 electron/main.cjs 注册的 app:// 协议代劳。",
+  "devDependencies": {
+    "electron": "^44.4.5",
+    "electron-builder": "^26.15.3"
+  },
+  "build": {
+    "appId": "com.cosmosorigin.game",
+    "productName": "CosmosOrigin",
+    "copyright": "MIT Licensed · break_eternity.js by Patashu",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "files": [
+      "index.html",
+      "css/**/*",
+      "src/**/*",
+      "dist/**/*",
+      "electron/**/*",
+      "LICENSE",
+      "!**/*.map"
+    ],
+    "compression": "normal",
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
+    }
+  }
+}

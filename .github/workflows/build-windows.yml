@@ -1,0 +1,95 @@
+# ═══════════════════════════════════════════════════════════
+# 自动构建 Windows exe
+#
+# 两种触发方式：
+#   1. 推送 tag（推荐）：git tag v0.4.5 && git push origin v0.4.5
+#      → 构建完成后自动创建一个 Release，把 exe/zip 挂上去，别人点开就能下载
+#   2. 手动：GitHub 网页 → Actions → 构建 Windows 版 → Run workflow
+#      → 构建完在本次运行的 Artifacts 里下载（不创建 Release）
+#
+# 为什么在云端构建而不是你本机：
+#   别人拉下来的 exe 是 GitHub 的 windows-latest 机器编的，与你的电脑环境无关，
+#   所以「我电脑能跑别人不能跑」这类问题不存在。你本机也不用装 Electron。
+# ═══════════════════════════════════════════════════════════
+
+name: 构建 Windows 版
+
+on:
+  push:
+    tags:
+      - "v*"          # 例如 v0.4.5
+  workflow_dispatch:  # 允许在网页上手动点按钮触发
+
+# 创建 Release 需要写权限。不写这一行 GITHUB_TOKEN 默认只读，发布步骤会 403。
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    # 项目根目录的 .npmrc 里把 Electron 下载源指向了 npmmirror（国内直连 GitHub
+    # Releases 会卡死在 0 字节）。GitHub 的构建机直连 GitHub 最快，所以这里用
+    # npm_config_* 环境变量显式覆盖回去 —— 环境变量的优先级高于 .npmrc。
+    env:
+      npm_config_electron_mirror: https://github.com/electron/electron/releases/download/
+      npm_config_electron_builder_binaries_mirror: https://github.com/electron-userland/electron-builder-binaries/releases/download/
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: 校验 tag 与 package.json 版本一致
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}".TrimStart("v")
+          $ver = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          Write-Host "tag = $tag / package.json version = $ver"
+          if ($tag -ne $ver) {
+            Write-Error "tag 与 package.json 的 version 不一致，先把 package.json 的 version 改成 $tag 再重新打 tag。"
+            exit 1
+          }
+
+      - name: 安装依赖
+        run: npm ci
+
+      # app:// 静态伺服层是打包后最容易坏的地方：JS 的 MIME 给错一个字，
+      # 窗口能开但游戏是死的（ES 模块被拒），而且不看控制台根本看不出原因。
+      # 这个自检是纯 Node 的，不需要 GUI，跑得又快又稳，所以设为硬性门槛。
+      # （另有 npm run smoke:electron 会真的起 Electron 加载页面 —— 那个需要桌面会话，
+      #   在 CI 上有偶发风险，没有放进流程里。）
+      - name: 自检 app:// 伺服层
+        run: npm run smoke
+
+      - name: 打包 exe
+        run: npm run dist
+
+      - name: 列出产物（便于排查）
+        shell: pwsh
+        run: Get-ChildItem release | Select-Object Name, @{n='MB';e={[math]::Round($_.Length/1MB,1)}} | Format-Table -AutoSize
+
+      - name: 上传构建产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: CosmosOrigin-windows-x64
+          path: |
+            release/*.exe
+            release/*.zip
+          if-no-files-found: error
+
+      - name: 发布到 Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/*.exe
+            release/*.zip
+          generate_release_notes: true
+          draft: false

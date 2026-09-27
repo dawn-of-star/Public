@@ -1,0 +1,16 @@
+# 统一换行符，避免 Windows/Linux 之间来回提交产生整文件 diff
+* text=auto eol=lf
+
+# 二进制文件不要做换行转换，也不要在 diff 里当文本显示
+*.ico  binary
+*.png  binary
+*.jpg  binary
+*.webp binary
+*.woff2 binary
+*.ttf  binary
+*.exe  binary
+*.zip  binary
+
+# GitHub 语言统计：把 legacy/ 和第三方库排除掉，别让它们盖过 src/
+legacy/** linguist-vendored
+dist/**   linguist-vendored

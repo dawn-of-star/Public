@@ -1,0 +1,18 @@
+# ── 依赖 ──
+node_modules/
+
+# ── 打包产物（electron-builder 输出目录）──
+release/
+
+# ── 编辑器 / 系统 ──
+.vscode/*.local.json
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ── 日志与临时文件 ──
+*.log
+npm-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tmp

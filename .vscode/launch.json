@@ -1,0 +1,33 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "🚀 Edge：启动服务器 + 调试",
+      "type": "msedge",
+      "request": "launch",
+      "url": "http://127.0.0.1:8321/",
+      "webRoot": "${workspaceFolder}",
+      "preLaunchTask": "dev-server",
+      "runtimeArgs": ["--auto-open-devtools-for-tabs"],
+      "presentation": { "group": "1-一键启动", "order": 1 }
+    },
+    {
+      "name": "🚀 Chrome：启动服务器 + 调试",
+      "type": "chrome",
+      "request": "launch",
+      "url": "http://127.0.0.1:8321/",
+      "webRoot": "${workspaceFolder}",
+      "preLaunchTask": "dev-server",
+      "runtimeArgs": ["--auto-open-devtools-for-tabs"],
+      "presentation": { "group": "1-一键启动", "order": 2 }
+    },
+    {
+      "name": "🔗 只开浏览器（服务器已在跑）",
+      "type": "msedge",
+      "request": "launch",
+      "url": "http://127.0.0.1:8321/",
+      "webRoot": "${workspaceFolder}",
+      "presentation": { "group": "2-分开用", "order": 1 }
+    }
+  ]
+}

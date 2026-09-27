@@ -1,0 +1,30 @@
+{
+  "//": "这是 test-034（0.3.4）的工作区配置。用 VSCode 打开本文件夹即生效。",
+
+  "editor.tabSize": 4,
+  "editor.insertSpaces": true,
+  "editor.rulers": [120],
+  "editor.formatOnSave": false,
+  "files.eol": "\n",
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true,
+
+  "//模块解析": "js/ 用的是原生 ES 模块 + 全局 Decimal（来自 dist/ 的 <script>）。VSCode 不认识 window.Decimal，关掉检查免得满屏波浪线。",
+  "javascript.validate.enable": false,
+  "js/ts.implicitProjectConfig.checkJs": false,
+  "javascript.suggest.autoImports": true,
+
+  "files.associations": {
+    "*.mjs": "javascript"
+  },
+
+  "search.exclude": {
+    "**/dist": true
+  },
+
+  "//LiveServer备选": "不想用 serve.mjs 的话，装 Live Server 扩展，右键 index.html → Open with Live Server",
+  "liveServer.settings.root": "/",
+  "liveServer.settings.port": 8321,
+  "liveServer.settings.NoBrowser": true,
+  "liveServer.settings.donotShowInfoMsg": true
+}

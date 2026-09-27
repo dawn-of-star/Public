@@ -1,0 +1,597 @@
+/* ══════════════════════════════════════════════════════════════
+   amoled.css —— AMOLED 主题（配色取自 Antimatter Dimensions）
+   ══════════════════════════════════════════════════════════════
+
+   来源：AD 源码 public/stylesheets/styles.css 的 :root .t-amoled 块
+        和 public/stylesheets/theme-AMOLED.css
+
+     --color-base:    #000000    纯黑底
+     --color-text:    #e0e0e0
+     --color-accent:  #2fa6f7    亮蓝
+     资源数字         #64dd17 + text-shadow: 0 0 7px   ← AD 标志性发光
+     按钮             #3aacd6 边框，hover 反色
+
+   三条 AD 的设计规则，这里也照做：
+   1. 纯黑背景，不用深灰
+   2. 有颜色的数字一律加 text-shadow 发光
+   3. 按钮默认「黑底 + 彩边」，hover 时「彩底 + 黑字」整体反色
+   ══════════════════════════════════════════════════════════════ */
+
+:root {
+  /* ── 底色 ── */
+  --bg: #000000;
+  --bg-card: #070707;
+  --bg-elevated: #0e0e0e;
+  --bg-hover: #161616;
+
+  /* ── 边框 ── */
+  --line: #1c1c1c;
+  --line-strong: #2a2a2a;
+
+  /* ── 文字 ── */
+  --text: #e0e0e0;
+  --text-dim: #757575;
+  --text-faint: #4a4a4a;
+  --text-bright: #ffffff;
+
+  /* ── 强调色（AD AMOLED）── */
+  --accent: #2fa6f7;
+  --green: #64dd17;
+  --blue: #3aacd6;
+  --infinity: #ff9800;
+  --eternity: #673ab7;
+  --reality: #4caf50;
+  --celestial: #00bcd4;
+  --gold: #ffd600;
+  --bad: #d9534f;
+  --disabled: #333333;
+
+  --radius: 6px;
+  --gap: 14px;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html { background: var(--bg); }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.55 "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+  min-height: 100vh;
+  padding: 18px;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 发光工具类 —— AD 的核心视觉 */
+.glow-green  { color: var(--green);     text-shadow: 0 0 7px var(--green); }
+.glow-blue   { color: var(--blue);      text-shadow: 0 0 7px var(--blue); }
+.glow-accent { color: var(--accent);    text-shadow: 0 0 7px var(--accent); }
+.glow-gold   { color: var(--gold);      text-shadow: 0 0 7px var(--gold); }
+.glow-etern  { color: var(--eternity);  text-shadow: 0 0 7px var(--eternity); }
+.glow-dm     { color: #ff3b30;          text-shadow: 0 0 7px #ff3b30; }
+
+/* ══════════════ 布局 ══════════════ */
+
+.wrap { max-width: 1180px; margin: 0 auto; }
+
+.topbar {
+  display: flex; align-items: center; gap: var(--gap);
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+  margin-bottom: var(--gap);
+}
+.topbar h1 {
+  font-size: 17px; font-weight: 600; letter-spacing: .5px;
+  color: var(--text-bright);
+}
+.topbar h1 small { color: var(--text-faint); font-size: 11px; font-weight: 400; margin-left: 8px; }
+.topbar .spacer { flex: 1; }
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+}
+.col { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
+
+/* ══════════════ 资源条 ══════════════ */
+
+.resources {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+  gap: 1px;
+  background: var(--line);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin-bottom: var(--gap);
+}
+.res {
+  background: var(--bg);
+  padding: 11px 14px;
+}
+.res .k {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .9px;
+  color: var(--text-faint); margin-bottom: 3px;
+}
+.res .v { font-size: 21px; font-weight: 600; line-height: 1.2; }
+.res .r { font-size: 11.5px; color: var(--text-dim); margin-top: 2px; }
+.res.primary .v { font-size: 25px; }
+
+/* ══════════════ 卡片 ══════════════ */
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.card > h2 {
+  font-size: 12px; font-weight: 600; letter-spacing: 1px;
+  text-transform: uppercase; color: var(--text-faint);
+  margin-bottom: 12px;
+  display: flex; align-items: center; gap: 8px;
+}
+.card > h2 .badge {
+  font-size: 10px; padding: 1px 7px; border-radius: 999px;
+  border: 1px solid var(--line-strong); color: var(--text-dim);
+  letter-spacing: .5px; text-transform: none;
+}
+
+/* ══════════════ 按钮 ══════════════ */
+
+button { font: inherit; cursor: pointer; }
+
+.btn {
+  display: block; width: 100%; text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  padding: 10px 13px;
+  transition: background .12s, border-color .12s, color .12s, box-shadow .12s;
+  position: relative;
+}
+.btn:hover:not(:disabled) { background: var(--bg-hover); border-color: var(--line-strong); }
+
+/* 买得起：彩边 + 发光 */
+.btn.affordable {
+  border-color: var(--blue);
+  color: var(--blue);
+  box-shadow: 0 0 0 1px rgba(58,172,214,.12), 0 0 10px rgba(58,172,214,.10);
+}
+.btn.affordable .btn-cost { color: var(--green); text-shadow: 0 0 7px var(--green); }
+.btn.affordable:hover {
+  background: var(--blue); color: var(--bg);   /* AD 式反色 */
+  box-shadow: 0 0 16px rgba(58,172,214,.45);
+}
+.btn.affordable:hover .btn-cost,
+.btn.affordable:hover .btn-desc { color: var(--bg); text-shadow: none; }
+
+.btn:disabled, .btn.maxed { opacity: .38; cursor: not-allowed; }
+
+.btn-row { display: flex; align-items: baseline; gap: 8px; }
+.btn-name { font-weight: 600; font-size: 13.5px; }
+.btn-lv { margin-left: auto; font-size: 11.5px; color: var(--text-faint); white-space: nowrap; }
+.btn-desc { font-size: 11.5px; color: var(--text-dim); margin-top: 3px; }
+.btn-cost { font-size: 12px; margin-top: 4px; color: var(--text-dim); }
+
+.stack { display: flex; flex-direction: column; gap: 8px; }
+
+/* ══════════════ 主点击按钮 ══════════════ */
+
+.click-zone {
+  display: grid; grid-template-columns: 1fr auto; gap: var(--gap); align-items: stretch;
+}
+#btn-click {
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  color: var(--accent);
+  font-size: 16px; font-weight: 600;
+  padding: 22px;
+  text-shadow: 0 0 8px rgba(47,166,247,.55);
+  box-shadow: inset 0 0 26px rgba(47,166,247,.06);
+  transition: background .1s, color .1s, box-shadow .1s, transform .05s;
+}
+#btn-click:hover { background: rgba(47,166,247,.10); box-shadow: 0 0 22px rgba(47,166,247,.28), inset 0 0 26px rgba(47,166,247,.10); }
+#btn-click:active { transform: scale(.99); background: rgba(47,166,247,.20); }
+#btn-click .sub { display: block; font-size: 12px; font-weight: 400; color: var(--text-dim); margin-top: 5px; text-shadow: none; }
+
+/* ══════════════ 进度条 ══════════════ */
+
+.bar {
+  position: relative;
+  height: 18px; border-radius: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.bar > i {
+  display: block; height: 100%; width: 0%;
+  background: linear-gradient(90deg, var(--eternity), var(--accent));
+  transition: width .25s;
+}
+.bar > span {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; color: var(--text);
+  text-shadow: 0 0 4px #000, 0 0 4px #000;
+}
+
+/* ══════════════ 里程碑 ══════════════ */
+
+.ms-list { display: flex; flex-direction: column; gap: 5px; }
+.ms {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 10px; border-radius: 4px;
+  background: var(--bg-elevated);
+  border: 1px solid transparent;
+  font-size: 12.5px;
+}
+.ms .dot {
+  width: 7px; height: 7px; border-radius: 50%;
+  background: var(--disabled); flex: 0 0 auto;
+}
+.ms .txt { flex: 1; color: var(--text-dim); min-width: 0; }
+.ms .need { color: var(--text-faint); font-size: 11px; white-space: nowrap; }
+.ms.done { border-color: rgba(100,221,23,.28); }
+.ms.done .dot { background: var(--green); box-shadow: 0 0 8px var(--green); }
+.ms.done .txt { color: var(--text); }
+.ms.next { border-color: var(--line-strong); }
+.ms.next .dot { background: var(--gold); box-shadow: 0 0 8px var(--gold); }
+
+/* ══════════════ 日志 ══════════════ */
+
+#log-panel {
+  max-height: 148px; overflow-y: auto;
+  font-size: 11.5px; line-height: 1.65;
+  color: var(--text-dim);
+}
+#log-panel .le { border-bottom: 1px solid #0f0f0f; padding: 3px 0; }
+#log-panel .le:last-child { border-bottom: none; }
+#log-panel .lt { color: var(--text-faint); margin-right: 7px; }
+#log-panel::-webkit-scrollbar { width: 7px; }
+#log-panel::-webkit-scrollbar-track { background: var(--bg); }
+#log-panel::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
+
+/* ══════════════ 顶部小按钮 ══════════════ */
+
+.tools { display: flex; gap: 7px; flex-wrap: wrap; }
+.tool {
+  background: var(--bg); border: 1px solid var(--line-strong);
+  color: var(--text-dim); border-radius: 4px;
+  padding: 5px 12px; font-size: 12px;
+  transition: all .12s;
+}
+.tool:hover { border-color: var(--accent); color: var(--accent); }
+.tool.danger:hover { border-color: var(--bad); color: var(--bad); }
+.tool.on { border-color: var(--green); color: var(--green); }
+
+/* ══════════════ 锁定态 ══════════════ */
+
+.locked {
+  text-align: center; padding: 20px 14px;
+  color: var(--text-faint); font-size: 12.5px;
+}
+.locked .big { font-size: 28px; display: block; margin-bottom: 8px; opacity: .5; }
+.locked .cond { margin-top: 9px; font-size: 11.5px; }
+.locked .cond .ok { color: var(--green); }
+.locked .cond .no { color: var(--bad); }
+
+/* ══════════════ 数值明细 ══════════════ */
+
+.detail { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 4px 18px; }
+.detail > div {
+  display: flex; justify-content: space-between; gap: 10px;
+  padding: 4px 0; border-bottom: 1px dashed #131313; font-size: 12.5px;
+}
+.detail span:first-child { color: var(--text-faint); }
+.detail b { font-weight: 600; }
+
+/* ══════════════ 作用乘区配色 ══════════════
+
+   每个升级按「作用在哪个乘区」上色。左侧有一条 3px 的色条，
+   hover 时整条边框也变成该乘区的颜色。
+
+   目的是让玩家一眼看出「这两条叠在同一个位置」——SPEC 判据 P7
+   说纯乘法链上乘法因子位置无关，但光看文字看不出来。
+*/
+
+.zone { border-left: 3px solid var(--zone, var(--line-strong)); }
+.zone-entropy  { --zone: #64dd17; }
+.zone-particle { --zone: #00bcd4; }
+.zone-matter   { --zone: #ff9800; }
+.zone-zpe      { --zone: #2fa6f7; }
+.zone-de       { --zone: #b388ff; }
+.zone-global   { --zone: #ffd600; }
+.zone-dm       { --zone: #ff3b30; }   /* 第四层：暗物质，红色主色调 */
+
+/* 买得起时：边框用乘区色而不是统一的蓝 */
+.btn.zone.affordable {
+  border-color: var(--zone, var(--blue));
+  color: var(--zone, var(--blue));
+  box-shadow: 0 0 10px color-mix(in srgb, var(--zone, var(--blue)) 22%, transparent);
+}
+.btn.zone.affordable .btn-cost { color: var(--zone, var(--green)); text-shadow: 0 0 7px var(--zone, var(--green)); }
+.btn.zone.affordable:hover {
+  background: var(--zone, var(--blue));
+  color: var(--bg);
+  box-shadow: 0 0 18px color-mix(in srgb, var(--zone, var(--blue)) 55%, transparent);
+}
+.btn.zone.affordable:hover .btn-cost,
+.btn.zone.affordable:hover .btn-desc { color: var(--bg); text-shadow: none; }
+
+/* 乘区小标签 */
+.zone-tag {
+  font-size: 10px; padding: 1px 6px; border-radius: 3px;
+  border: 1px solid var(--zone, var(--line-strong));
+  color: var(--zone, var(--text-dim));
+  white-space: nowrap;
+}
+
+/* 图例 */
+.legend {
+  display: flex; flex-wrap: wrap; gap: 6px 14px;
+  padding: 10px 12px; margin-bottom: var(--gap);
+  background: var(--bg-card); border: 1px solid var(--line);
+  border-radius: var(--radius);
+  font-size: 11.5px;
+}
+.legend .item { display: flex; align-items: center; gap: 6px; color: var(--text-dim); }
+.legend .swatch {
+  width: 10px; height: 10px; border-radius: 2px;
+  background: var(--zone); box-shadow: 0 0 6px var(--zone);
+}
+/* 虹色乘区（梦想加成）：色块走流动渐变，和 .rainbow 文字同一套色 */
+.legend .swatch-rainbow {
+  background: linear-gradient(90deg,
+    #ff5f6d, #ffc371, #7ee787, #4dd0e1, #7c4dff, #ff5f6d);
+  background-size: 300% 100%;
+  box-shadow: 0 0 6px #7c4dff;
+  animation: dreamHue 6s linear infinite;
+}
+.legend .hint { margin-left: auto; color: var(--text-faint); font-size: 11px; }
+
+/* 里程碑也带乘区色 */
+.ms { border-left: 3px solid var(--zone, transparent); }
+
+/* ══════════════ 买满按钮 ══════════════ */
+
+.btn-main {
+  display: flex; align-items: stretch; gap: 6px;
+}
+.btn-main > .btn { flex: 1; }
+.btn-max {
+  flex: 0 0 auto; min-width: 66px;
+  background: var(--bg); border: 1px solid var(--line-strong);
+  border-radius: var(--radius); color: var(--text-dim);
+  font-size: 11.5px; font-weight: 600; letter-spacing: .5px;
+  transition: all .12s;
+}
+.btn-max:hover:not(:disabled) { border-color: var(--zone, var(--accent)); color: var(--zone, var(--accent)); }
+.btn-max.can { border-color: var(--zone, var(--green)); color: var(--zone, var(--green)); }
+.btn-max.can:hover { background: var(--zone, var(--green)); color: var(--bg); }
+.btn-max:disabled { opacity: .3; cursor: not-allowed; }
+.btn-max .n { display: block; font-size: 13px; }
+
+/* ══════════════ 工具类 ══════════════ */
+
+.toolbar { display: flex; gap: 8px; margin: 18px 0 8px; flex-wrap: wrap; }
+
+/* ══════════════ 标签页（AD 现代 UI 风格）══════════════
+
+   标签栏贴在卡片顶部，激活项用该层的乘区色高亮 + 底部色条。
+   每个标签对应一个「系统」，颜色沿用 ZONES 的定义。
+*/
+
+.tabs {
+  display: flex; gap: 2px;
+  border-bottom: 1px solid var(--line);
+  margin: -14px -16px 14px -16px;   /* 抵消 .card 的 padding */
+  padding: 0 7px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.tabs::-webkit-scrollbar { display: none; }
+
+.tab {
+  flex: 0 0 auto;
+  background: transparent; border: none;
+  border-bottom: 2px solid transparent;
+  color: var(--text-faint);
+  padding: 11px 14px 9px;
+  font-size: 12.5px; font-weight: 600; letter-spacing: .3px;
+  white-space: nowrap;
+  transition: color .13s, border-color .13s, background .13s;
+  display: flex; align-items: center; gap: 7px;
+}
+.tab:hover { color: var(--text-dim); background: rgba(255,255,255,.025); }
+.tab.active {
+  color: var(--zone, var(--accent));
+  border-bottom-color: var(--zone, var(--accent));
+  text-shadow: 0 0 8px color-mix(in srgb, var(--zone, var(--accent)) 45%, transparent);
+}
+.tab .dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--zone, var(--line-strong));
+  flex: 0 0 auto;
+}
+.tab.active .dot { box-shadow: 0 0 7px var(--zone, var(--accent)); }
+.tab .tag {
+  font-size: 10px; padding: 0 5px; border-radius: 3px;
+  background: rgba(255,255,255,.06); color: var(--text-faint);
+  font-weight: 500;
+}
+.tab.active .tag { background: color-mix(in srgb, var(--zone) 22%, transparent); color: var(--zone); }
+/* ══════════════════════════════════════════════════════════
+   暗物质相变环
+   ══════════════════════════════════════════════════════════
+
+   为什么要有它：坍缩是自动的，玩家在等的时候会纳闷「我是不是没事干」。
+   原稿用百分比进度条解决这个问题，这里换成圆环。
+
+   ⚠️ 环的厚度必须**大于内部文字**，否则文字会压住环、看不出读数。
+      这里 stroke-width 16 > font-size 13。 */
+.ring-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 14px;
+}
+.ring-wrap {
+  position: relative;
+  width: 88px;
+  height: 88px;
+  flex: 0 0 auto;
+}
+.ring {
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);   /* 从 12 点方向开始 */
+}
+/* 底环（非高光部分）：**比背景亮一点点**的暗色。
+   背景是 #000，所以用 #1b1b1b —— 能看出有圈，但不会抢眼。
+   （之前用 #171717，用户反馈看着偏亮，已压暗。）*/
+.ring-track {
+  fill: none;
+  stroke: #1b1b1b;
+  stroke-width: 16;
+}
+/* 进度模式：保持原来的红色 */
+.ring-fill {
+  fill: none;
+  stroke: #ff3b30;
+  stroke-width: 16;
+  stroke-linecap: butt;
+  /* 半径 42 -> 周长 2πr ≈ 263.9 */
+  stroke-dasharray: 263.9;
+  stroke-dashoffset: 263.9;
+  transition: stroke-dashoffset .1s linear;
+  filter: drop-shadow(0 0 4px rgba(255, 59, 48, .55));
+}
+.ring-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  color: var(--text);
+  text-shadow: 0 0 4px #000, 0 0 2px #000;   /* 保证压在环上也读得清 */
+  pointer-events: none;
+}
+.ring-info { font-size: 12px; line-height: 1.75; }
+.ring-info > div { display: flex; justify-content: space-between; gap: 12px; }
+.ring-info span { color: var(--text-faint); }
+.ring-info b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+/* 瞬时模式：一轮不到 0.5 秒时，填充环看不出变化，
+   改成一段**高光绕圈旋转**，让玩家仍然看到「系统在跑」。
+   高光用紫色（= 暗能量页的乘区色 --zone），和常驻的红/金区分开。 */
+.ring-wrap.instant .ring-fill {
+  stroke-dasharray: 46 217.9;
+  stroke: #b388ff;
+  filter: drop-shadow(0 0 6px rgba(179, 136, 255, .85));
+  animation: ringSpin .85s linear infinite;
+}
+@keyframes ringSpin {
+  to { stroke-dashoffset: -263.9; }
+}
+.ring-wrap.instant .ring-label { color: #b388ff; }
+
+/* 有新东西可买时脉动提示。
+      否则「无限」标签（金色）会被染成绿的。
+   （踩过：.tab.alert 写在 .tab.active 之后，同优先级下后者覆盖前者。）*/
+.tab.alert {
+  color: var(--zone, var(--accent));
+  text-shadow: 0 0 11px var(--zone, var(--accent));
+  animation: tabPulse 1.5s ease-in-out infinite;
+}
+.tab.alert .dot {
+  background: var(--zone, var(--accent));
+  box-shadow: 0 0 9px var(--zone, var(--accent));
+}
+@keyframes tabPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: .58; }
+}
+
+.tab-panel[hidden] { display: none; }
+
+/* 锁定的标签 */
+.tab.locked { color: var(--text-faint); opacity: .45; cursor: not-allowed; }
+.tab.locked .dot { background: var(--disabled); }
+
+/* ══════════════ 量子（红色）══════════════ */
+
+.quantum-head {
+  display: flex; align-items: baseline; gap: 9px;
+  padding: 10px 12px; margin-bottom: 12px;
+  background: rgba(255,59,48,.06);
+  border: 1px solid rgba(255,59,48,.28);
+  border-radius: var(--radius);
+}
+.quantum-head .v {
+  font-size: 24px; font-weight: 700; color: var(--zone-dm, #ff3b30);
+  text-shadow: 0 0 10px rgba(255,59,48,.65);
+}
+.quantum-head .k { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .8px; }
+.quantum-head .sub { margin-left: auto; font-size: 11.5px; color: var(--text-dim); }
+
+.q-card {
+  border-left: 3px solid #ff3b30;
+  background: linear-gradient(90deg, rgba(255,59,48,.05), transparent 60%);
+}
+.q-card.owned { opacity: .55; }
+
+/* ══════════════ 提示条 ══════════════ */
+
+.banner {
+  background: rgba(47,166,247,.07);
+  border: 1px solid rgba(47,166,247,.3);
+  color: var(--accent);
+  border-radius: var(--radius);
+  padding: 9px 13px; font-size: 12.5px; margin-bottom: var(--gap);
+}
+
+#fatal {
+  display: none; margin-bottom: var(--gap);
+  background: rgba(217,83,79,.08); border: 1px solid rgba(217,83,79,.4);
+  color: #ff9f9f; padding: 14px; border-radius: var(--radius);
+  white-space: pre-wrap; font-family: ui-monospace, Consolas, monospace; font-size: 12px;
+}
+
+/* ══════════════ 梦想点：虹色 ══════════════
+   用户要求：梦想点与涉及梦想点的升级用虹色。
+   做法是**流动的渐变文字**（background-clip: text），比特效堆叠更干净，
+   而且颜色本身在动，一眼能认出「这是梦想点体系」。 */
+@keyframes dreamHue {
+  0%   { background-position:   0% 50%; }
+  100% { background-position: 300% 50%; }
+}
+.rainbow {
+  background: linear-gradient(90deg,
+    #ff5f6d, #ffc371, #7ee787, #4dd0e1, #7c4dff, #ff5f6d);
+  background-size: 300% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: dreamHue 6s linear infinite;
+  font-weight: 700;
+}
+/* 卡片：走边框 + 底色，不做文字裁剪（否则子元素全变透明） */
+.q-card.rainbow-card {
+  border-left: 3px solid transparent;
+  border-image: linear-gradient(180deg,
+    #ff5f6d, #ffc371, #7ee787, #4dd0e1, #7c4dff) 1;
+  background: linear-gradient(90deg, rgba(124,77,255,.07), transparent 65%);
+}

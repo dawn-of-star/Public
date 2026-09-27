@@ -1,0 +1,563 @@
+
+/* 1. 重置与全局设置 */
+* { 
+    margin: 0; 
+    padding: 0; 
+    box-sizing: border-box; 
+}
+body { 
+    background-color: #121212; 
+    color: #00ffcc; 
+    font-family: 'Courier New', Courier, monospace; 
+    min-height: 100vh; 
+    padding: 20px;
+    display: flex;
+    justify-content: center;
+}
+
+/* 2. 容器布局优化 */
+.game-container { 
+    text-align: center; 
+    border: 1px solid #00ffcc; 
+    padding: 30px; 
+    border-radius: 8px; 
+    box-shadow: 0 0 10px rgba(0, 255, 204, 0.3); 
+    max-width: 600px; 
+    width: 100%; 
+    position: relative;
+    background: rgba(18, 18, 18, 0.8);
+}
+
+/* 5. 新增：时间位置组件样式 */
+time_location {
+    display: block;
+    margin-bottom: 15px;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+    color: #00ffcc;
+    text-align: left;
+    line-height: 1.5;
+}
+
+.clock-line {
+    margin: 4px 0;
+}
+
+.clock-card {
+    background: rgba(0, 255, 204, 0.05);
+    border: 1px solid rgba(0, 255, 204, 0.3);
+    border-radius: 6px;
+    padding: 12px;
+    margin: 0 auto;
+    backdrop-filter: blur(4px);
+    box-shadow: 0 0 8px rgba(0, 255, 204, 0.1);
+}
+
+.clock-time {
+    font-size: 2em;
+    font-weight: 900;
+    color: #00ffcc;
+    letter-spacing: 1px;
+    margin-bottom: 2px;
+}
+
+.clock-date,
+.clock-location {
+    font-size: 0.8em;
+    color: #00ffcc;
+    opacity: 0.7;
+    margin: 2px 0;
+}
+
+/* 3. 资源显示面板 */
+.resource-panel { 
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin: 20px 0;
+    padding: 15px;
+    border: 1px dashed rgba(0, 255, 204, 0.5);
+    border-radius: 5px;
+    background: rgba(0, 255, 0, 0.05);
+}
+
+.resource-item { 
+    text-align: center;
+    padding: 8px;
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 4px;
+    border: 1px solid rgba(0, 255, 204, 0.2);
+}
+
+.resource-item span:first-child { 
+    font-size: 0.85em; 
+    color: #66ff66; 
+    display: block;
+    margin-bottom: 5px;
+}
+
+.resource-value { 
+    font-size: 1.8em; 
+    font-weight: bold; 
+    color: #00ffcc; 
+    font-family: 'DSEG7 Classic', 'Courier New', monospace; /* 如果有数码管字体更好，没有则用等宽字体 */
+    letter-spacing: 1px;
+}
+
+/* 4. 操作按钮统一风格 */
+.control-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    margin: 20px 0;
+}
+
+.action-btn, 
+#btn-click, 
+#btn-buy-trap, 
+#btn-upgrade-freq {
+    background: transparent;
+    border: 1px solid #00ffcc;
+    color: #00ffcc;
+    padding: 12px 20px;
+    font-size: 1em;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    border-radius: 4px;
+    font-family: 'Courier New', monospace;
+    font-weight: bold;
+    text-align: left;
+}
+
+.action-btn:hover:not(:disabled), 
+#btn-click:hover:not(:disabled), 
+#btn-buy-trap:hover:not(:disabled), 
+#btn-upgrade-freq:hover:not(:disabled) {
+    background: #00ffcc;
+    color: #121212;
+    transform: scale(1.02);
+}
+
+.action-btn:disabled, 
+#btn-click:disabled, 
+#btn-buy-trap:disabled, 
+#btn-upgrade-freq:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    border-color: #888;
+}
+
+/* 5. 日志面板 */
+.log-panel { 
+    height: 120px; 
+    overflow-y: auto; 
+    background: #111; 
+    padding: 10px; 
+    border-radius: 4px; 
+    font-family: monospace; 
+    font-size: 0.85em; 
+    color: #aaa; 
+    border: 1px solid #333; 
+    margin-top: 15px; 
+    text-align: left;
+}
+
+.log-entry { 
+    margin-bottom: 4px; 
+    border-bottom: 1px solid #222; 
+    padding-bottom: 2px; 
+    color: #00ffcc; 
+}
+.upgrade-panel button {
+    background-color: #4CAF50; /* 绿色背景 */
+    color: white; /* 白色文字 */
+    border: none; /* 无边框 */
+    padding: 10px 20px; /* 内边距 */
+    text-align: center; /* 文字居中 */
+    text-decoration: none; /* 无下划线 */
+    display: inline-block; /* 行内块元素 */
+    font-size: 16px; /* 字体大小 */
+    margin: 4px 2px; /* 外边距 */
+    cursor: pointer; /* 鼠标指针为手型 */
+    border-radius: 8px; /* 圆角 */
+}
+/* 禁用按钮样式 */
+.upgrade-panel button:disabled {
+    background-color: #cccccc; /* 灰色背景 */
+    cursor: not-allowed; /* 鼠标指针为禁止 */
+}
+/* ===== 双列布局 ===== */
+.main-wrapper {
+    display: flex;
+    gap: 30px;
+    max-width: 1200px;
+    width: 100%;
+    margin: 0 auto;
+    align-items: flex-start;
+}
+.game-container {
+    flex: 2;
+    min-width: 0; /* 防止溢出 */
+}
+.void-panel {
+    flex: 1;
+    background: rgba(0, 20, 40, 0.8);
+    border: 1px solid #00ccff;
+    border-radius: 8px;
+    padding: 20px;
+    box-shadow: 0 0 20px rgba(0, 204, 255, 0.2);
+    color: #aaddff;
+    min-width: 220px;
+}
+.void-panel h2 {
+    margin-top: 0;
+    color: #00ccff;
+    border-bottom: 1px solid #00ccff;
+    padding-bottom: 8px;
+}
+.void-resource {
+    font-size: 1.1em;
+    margin: 10px 0;
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+}
+.void-value {
+    font-size: 1.4em;
+    font-weight: bold;
+    color: #66ffdd;
+}
+.void-rate {
+    font-size: 0.9em;
+    color: #88ddff;
+    margin-left: 5px;
+}
+.void-multiplier {
+    font-size: 1.1em;
+    margin: 8px 0 16px;
+    background: rgba(0, 204, 255, 0.1);
+    padding: 6px 12px;
+    border-radius: 4px;
+    text-align: center;
+}
+.void-milestones h3 {
+    margin: 12px 0 8px;
+    color: #88ddff;
+}
+#milestone-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    max-height: 400px;
+    overflow-y: auto;
+    padding-right: 4px;
+}
+.milestone-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 4px 8px;
+    background: rgba(0, 204, 255, 0.05);
+    border-left: 3px solid #005577;
+    border-radius: 2px;
+    font-size: 0.9em;
+}
+.milestone-item.claimed {
+    border-left-color: #66ff88;
+    opacity: 0.7;
+}
+.milestone-item .milestone-desc {
+    flex: 1;
+}
+.milestone-item .milestone-status {
+    font-weight: bold;
+    margin-left: 10px;
+    white-space: nowrap;
+}
+.milestone-item .milestone-status.unlocked {
+    color: #66ff88;
+}
+.milestone-item .milestone-status.locked {
+    color: #ff8866;
+}
+.milestone-item .milestone-status.claimed {
+    color: #88ccff;
+}
+/* ===== 虚空升级样式 ===== */
+.void-upgrades {
+    margin-top: 20px;
+    border-top: 1px solid rgba(0, 204, 255, 0.3);
+    padding-top: 12px;
+}
+.void-upgrades h3 {
+    color: #88ddff;
+    margin: 0 0 8px 0;
+}
+#void-upgrade-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+.void-upgrade-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: rgba(0, 204, 255, 0.05);
+    padding: 4px 8px;
+    border-radius: 4px;
+    border-left: 3px solid #00aacc;
+    font-size: 0.9em;
+    flex-wrap: wrap;
+}
+.void-upgrade-item .void-upgrade-info {
+    flex: 1;
+    min-width: 120px;
+}
+.void-upgrade-item .void-upgrade-name {
+    font-weight: bold;
+    color: #66ffdd;
+}
+.void-upgrade-item .void-upgrade-desc {
+    color: #aaddff;
+    font-size: 0.85em;
+    margin-left: 6px;
+}
+.void-upgrade-item .void-upgrade-cost {
+    color: #88ddff;
+    margin: 0 8px;
+}
+.void-upgrade-item .void-upgrade-status {
+    font-weight: bold;
+    white-space: nowrap;
+}
+.void-upgrade-btn {
+    background: transparent;
+    border: 1px solid #00ccff;
+    color: #00ccff;
+    padding: 2px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.85em;
+    font-family: 'Courier New', monospace;
+    transition: all 0.2s;
+}
+.void-upgrade-btn:hover:not(:disabled) {
+    background: #00ccff;
+    color: #121212;
+}
+.void-upgrade-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    border-color: #555;
+    color: #888;
+}
+.void-upgrade-btn.purchased {
+    border-color: #66ff88;
+    color: #66ff88;
+    background: rgba(102, 255, 136, 0.1);
+    cursor: default;
+}
+.milestone-desc .milestone-cost {
+    opacity: 0.6;
+    font-size: 0.8em;
+    margin-left: 4px;
+}
+/* ===== 暗能量面板 ===== */
+.darkenergy-panel {
+    margin-top: 20px;
+    border-top: 1px solid rgba(150, 100, 255, 0.3);
+    padding-top: 12px;
+    background: rgba(20, 0, 40, 0.5);
+    border-radius: 8px;
+    padding: 15px;
+}
+.darkenergy-panel h2 {
+    color: #aa88ff;
+    margin: 0 0 8px 0;
+    font-size: 1.2em;
+}
+.de-resource {
+    display: flex;
+    justify-content: space-between;
+    font-size: 1.1em;
+    margin: 6px 0;
+}
+.de-value {
+    font-weight: bold;
+    color: #aa88ff;
+}
+.de-rate {
+    color: #8866cc;
+    font-size: 0.9em;
+}
+.de-multiplier {
+    background: rgba(150, 100, 255, 0.1);
+    padding: 4px 10px;
+    border-radius: 4px;
+    margin: 6px 0;
+    text-align: center;
+}
+.de-upgrades {
+    margin: 12px 0;
+}
+.de-upgrade-btn {
+    display: block;
+    width: 100%;
+    background: transparent;
+    border: 1px solid #8866cc;
+    color: #ccbbff;
+    padding: 6px 10px;
+    margin: 4px 0;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: 'Courier New', monospace;
+    font-size: 0.9em;
+    text-align: left;
+    transition: all 0.2s;
+}
+.de-upgrade-btn:hover:not(:disabled) {
+    background: #8866cc;
+    color: #121212;
+}
+.de-upgrade-btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    border-color: #555;
+}
+.de-upgrade-btn.purchased {
+    border-color: #66ff88;
+    color: #66ff88;
+}
+.de-milestones {
+    margin: 10px 0;
+}
+#de-milestone-list {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    max-height: 150px;
+    overflow-y: auto;
+}
+.de-milestone-item {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 6px;
+    font-size: 0.85em;
+    border-left: 3px solid #443366;
+}
+.de-milestone-item.claimed {
+    border-left-color: #66ff88;
+    opacity: 0.7;
+}
+.de-status {
+    display: flex;
+    justify-content: space-between;
+    font-size: 0.9em;
+    margin-top: 8px;
+    padding: 4px 8px;
+    background: rgba(0,0,0,0.2);
+    border-radius: 4px;
+}
+/* 暗能量面板覆盖层 */
+.de-overlay {
+    position: relative;
+    background: rgba(20, 0, 40, 0.9);
+    border-radius: 8px;
+    padding: 30px 20px;
+    text-align: center;
+    min-height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.de-overlay-content {
+    max-width: 400px;
+    margin: 0 auto;
+}
+.de-overlay-content h2 {
+    color: #aa88ff;
+    margin-bottom: 12px;
+}
+.de-overlay-content p {
+    color: #ccbbff;
+    font-size: 0.95em;
+    line-height: 1.6;
+}
+.de-unlock-status {
+    display: flex;
+    justify-content: center;
+    gap: 30px;
+    margin: 15px 0;
+    font-size: 1em;
+    color: #ddddff;
+}
+.de-unlock-status span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+#btn-unlock-transmuter {
+    background: transparent;
+    border: 2px solid #8866cc;
+    color: #ccbbff;
+    padding: 12px 30px;
+    font-size: 1.2em;
+    border-radius: 8px;
+    cursor: not-allowed;
+    font-family: 'Courier New', monospace;
+    transition: all 0.3s;
+    margin-top: 10px;
+    opacity: 0.5;
+}
+#btn-unlock-transmuter:not(:disabled) {
+    opacity: 1;
+    cursor: pointer;
+    border-color: #66ff88;
+    color: #66ff88;
+}
+#btn-unlock-transmuter:not(:disabled):hover {
+    background: #66ff88;
+    color: #121212;
+}
+/* 暗能量内容默认隐藏，由 JS 控制显示 */
+.de-content {
+    display: none;
+}
+.de-content.active {
+    display: block;
+}
+/* 暗能量进度条 */
+.de-progress-container {
+    margin: 8px 0 12px 0;
+    text-align: center;
+}
+.de-progress-bar-wrapper {
+    position: relative;
+    background: rgba(100, 80, 200, 0.15);
+    border-radius: 6px;
+    height: 20px;
+    overflow: hidden;
+    border: 1px solid rgba(150, 100, 255, 0.3);
+}
+.de-progress-bar {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, #8866cc, #aa88ff);
+    transition: width 0.3s ease;
+    border-radius: 6px;
+}
+.de-progress-text {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    color: #ccbbff;
+    font-size: 0.85em;
+    font-weight: bold;
+    text-shadow: 0 0 4px rgba(0,0,0,0.8);
+}
+.de-progress-time {
+    font-size: 0.85em;
+    color: #aaddff;
+    margin-top: 4px;
+    opacity: 0.8;
+}

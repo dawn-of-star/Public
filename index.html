@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>宇宙起源 demo
+</title>
+<link rel="stylesheet" href="./css/amoled.css">
+<!--
+  这里**不需要** <script src="dist/break_eternity.min.js"> 了。
+  新的 src/ 是原生 ES 模块，直接 import dist 里的 ESM 版本：
+      import Decimal from "../dist/break_eternity.esm.js";
+  好处：没有全局变量、没有加载顺序问题、Node 里也能跑（tools/headless.mjs）。
+
+  想看原稿版本 → 打开 index-legacy.html（它用 js/ 和全局 Decimal）
+-->
+</head>
+<body>
+
+<div class="wrap">
+
+  <!-- ══════════ 顶栏 ══════════ -->
+  <div class="topbar">
+    <h1>宇宙起源 <small>demo· AMOLED</small></h1>
+    <div class="spacer"></div>
+    <div class="tools">
+      <button class="tool" id="btn-save">保存</button>
+      <button class="tool" id="btn-export">导出存档</button>
+      <button class="tool danger" id="btn-reset">重置</button>
+    </div>
+  </div>
+
+  <div id="offline-banner" class="banner" hidden></div>
+  <div id="fatal"></div>
+
+  <!-- ══════════ 资源条 ══════════ -->
+  <div class="resources">
+    <!-- ★ 熵：大数字放**速率**，小字放**持有量**。
+         熵凝聚斜率上去之后（趋近 1 熵 = N 粒子），熵进来就被转走，
+         持有量恒等于「不足一个阈值的余数」，**没有信息量**。
+         真正有意义的是每秒产出多少。 -->
+    <div class="res primary">
+      <div class="k">熵 Entropy</div>
+      <div class="v glow-green" id="rate-entropy">+0/s</div>
+      <div class="r" id="val-entropy">余 0</div>
+    </div>
+    <div class="res primary">
+      <div class="k">基本粒子 Particle</div>
+      <div class="v glow-green" id="val-particle">0</div>
+      <div class="r" id="rate-particle">+0/s</div>
+    </div>
+    <div class="res primary">
+      <div class="k">基本物质 Matter</div>
+      <div class="v glow-green" id="val-matter">0</div>
+      <div class="r" id="rate-matter">+0/s</div>
+    </div>
+    <div class="res">
+      <div class="k">梦想点 Dream</div>
+      <div class="v rainbow" id="val-dream">0</div>
+      <div class="r">虚空升级奖励</div>
+    </div>
+    <div class="res">
+      <div class="k">真空零点能 ZPE</div>
+      <div class="v glow-accent" id="val-zpe">0</div>
+      <div class="r" id="rate-zpe">+0/s</div>
+    </div>
+    <div class="res">
+      <div class="k">暗能量 Dark Energy</div>
+      <div class="v glow-etern" id="val-de">0</div>
+      <div class="r" id="rate-de">+0/s</div>
+    </div>
+    <div class="res">
+      <div class="k">全局倍率</div>
+      <div class="v glow-gold" id="global-multiplier">×1.00</div>
+      <div class="r" id="global-detail">梦想点 × 全局倍率升级 × 暗能量</div>
+    </div>
+  </div>
+
+  <!-- ══════════ 乘区图例（由 JS 生成） ══════════ -->
+  <div class="legend" id="zone-legend"></div>
+
+  <!-- ══════════ 主布局 ══════════ -->
+  <div class="layout">
+
+    <!-- ─────────── 左列 ─────────── -->
+    <div class="col">
+
+      <!-- 点击区 -->
+      <div class="card">
+        <h2>操作</h2>
+        <div class="click-zone">
+          <button id="btn-click">
+            点击生成熵
+            <span class="sub" id="click-gain">+10 熵 / 次</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- 升级中心 -->
+      <div class="card">
+        <h2>升级中心 <span class="badge" id="upgrade-count">0 项可购买</span></h2>
+        <div class="stack" id="upgrade-list"></div>
+      </div>
+
+      <!-- 熵阱 -->
+      <div class="card">
+        <h2>熵阱 <span class="badge" id="trap-badge">0</span></h2>
+        <button class="btn zone zone-entropy" id="btn-buy-trap">
+          <div class="btn-row">
+            <span class="btn-name">购买熵阱</span>
+            <span class="btn-lv" id="trap-lv">0 个</span>
+          </div>
+          <div class="btn-desc">每个熵阱每秒产 1 熵，同时产 ZPE —— <b>右键买满</b></div>
+          <div class="btn-cost" id="trap-cost">花费 0.1 物质</div>
+        </button>
+        <div class="detail" style="margin-top:12px">
+          <div><span>实际生效数量</span><b id="trap-effective" class="glow-green">0</b></div>
+          <div><span>熵凝聚规则</span><b id="entropy-rule">消耗 100 熵 → 1 粒子</b></div>
+        </div>
+      </div>
+
+      <!-- 数值明细 -->
+      <div class="card">
+        <h2>数值明细</h2>
+        <div class="detail">
+          <div><span>熵产出</span><b id="d-entropy-rate">0</b></div>
+          <div><span>粒子产出</span><b id="d-particle-rate">0</b></div>
+          <div><span>物质产出</span><b id="d-matter-rate">0</b></div>
+          <div><span>ZPE 产出</span><b id="d-zpe-rate">0</b></div>
+          <div><span>ZPE 倍率</span><b id="d-zpe-mult">×1.00</b></div>
+          <div><span>ZPE 产出倍率</span><b id="d-zpe-prod">×1.00</b></div>
+          <div><span>暗能量倍率</span><b id="d-de-mult">×1.00</b></div>
+          <div><span>ZPE 惩罚</span><b id="d-zpe-penalty">无</b></div>
+          <div><span>累计点击</span><b id="d-clicks">0</b></div>
+          <div><span>游戏时长</span><b id="d-playtime">0s</b></div>
+        </div>
+      </div>
+
+      <!-- 日志 -->
+      <div class="card">
+        <h2>日志</h2>
+        <div id="log-panel"></div>
+      </div>
+
+    </div>
+
+    <!-- ─────────── 右列：标签页 ─────────── -->
+    <div class="col">
+
+      <div class="card">
+
+        <!-- 标签栏 -->
+        <div class="tabs" id="tabs">
+          <button class="tab" id="tab-void" data-tab="void" style="--zone:#2fa6f7">
+            <span class="dot"></span>虚空科技<span class="tag" id="tab-tag-void">0/9</span>
+          </button>
+          <button class="tab" id="tab-de" data-tab="de" style="--zone:#b388ff">
+            <span class="dot"></span>暗能量<span class="tag" id="tab-tag-de">锁</span>
+          </button>
+          <button class="tab" id="tab-quantum" data-tab="quantum" style="--zone:#ff3b30">
+            <span class="dot"></span>量子<span class="tag" id="tab-tag-quantum">锁</span>
+          </button>
+          <button class="tab" id="tab-infinity" data-tab="infinity" style="--zone:#ffd600">
+            <span class="dot"></span>无限<span class="tag" id="tab-tag-infinity">锁</span>
+          </button>
+        </div>
+
+        <!-- ══ 面板：虚空 ══ -->
+        <div class="tab-panel" id="panel-void">
+          <div class="detail" style="margin-bottom:12px">
+            <div><span>ZPE 倍率</span><b id="zpe-multiplier" class="glow-accent">×1.00</b></div>
+            <div><span>已购虚空升级</span><b id="void-count">0</b></div>
+          </div>
+          <div class="stack" id="void-upgrade-list"></div>
+
+          <h2 style="margin-top:16px">虚空里程碑</h2>
+          <div class="ms-list" id="milestone-list"></div>
+        </div>
+
+        <!-- ══ 面板：暗能量 ══ -->
+        <div class="tab-panel" id="panel-de" hidden>
+          <div id="de-locked" class="locked">
+            <span class="big">&#127761;</span>
+            相变仪未解锁
+            <div class="cond" id="de-unlock-cond"></div>
+            <button class="btn" id="btn-unlock-transmuter" style="margin-top:12px">启动相变仪</button>
+          </div>
+
+          <div id="de-content" hidden>
+            <!-- 相变环：ZPE → 暗能量 的转换进度。
+                 意义和原稿的百分比条一样 —— 让玩家知道「现在没事干」是正常的。
+                 一轮 < 0.5 秒时自动切成高光旋转（见 css 的 .ring-wrap.instant）。 -->
+            <div class="ring-row">
+              <div class="ring-wrap" id="de-ring-wrap">
+                <svg class="ring" viewBox="0 0 100 100" aria-hidden="true">
+                  <!-- fill="none" 内联写死：万一样式表没生效，SVG 的默认填充
+                       会把整圈涂成黑色实心，环就读不出来了 -->
+                  <circle class="ring-track" cx="50" cy="50" r="42" fill="none"></circle>
+                  <circle class="ring-fill" id="de-ring-fill" cx="50" cy="50" r="42" fill="none"></circle>
+                </svg>
+                <div class="ring-label"><b id="de-ring-pct">0%</b></div>
+              </div>
+              <div class="ring-info">
+                <div><span>相变仪</span><b>ZPE → 暗能量</b></div>
+                <div><span>转换速率</span><b id="de-ring-rate">—</b></div>
+                <div><span>暗能量产出</span><b id="de-ring-de">—</b></div>
+              </div>
+            </div>
+
+            <div class="detail" style="margin-bottom:12px">
+              <div><span>暗能量倍率</span><b id="de-multiplier" class="glow-etern">×1.00</b></div>
+              <div><span>ZPE 产出惩罚</span><b id="de-penalty">无</b></div>
+            </div>
+            <div class="stack" id="de-upgrade-list"></div>
+
+            <h2 style="margin-top:16px">暗能量里程碑</h2>
+            <div class="ms-list" id="de-milestone-list"></div>
+          </div>
+        </div>
+
+        <!-- ══ 面板：量子（红色）══ -->
+        <div class="tab-panel" id="panel-quantum" hidden>
+
+          <div id="q-locked" class="locked">
+            <span class="big">&#9883;</span>
+            量子系统未解锁
+            <div class="cond">
+              <div>需要基础物质达到 <b id="q-need">1e25</b></div>
+              <div style="margin-top:6px">解锁后观测到<b>量子涨落</b>：真空零点能每达到一个门槛，就捕获一对极稀有的<b>量子</b></div>
+            </div>
+          </div>
+
+          <div id="q-content" hidden>
+            <div class="quantum-head">
+              <div>
+                <div class="k">量子 Quantum</div>
+                <div class="v" id="val-quantum">0</div>
+              </div>
+              <div class="sub" id="quantum-sub">累计 0 · 从未坍缩</div>
+            </div>
+
+            <div class="detail" style="margin-bottom:14px">
+            </div>
+
+            <h2 style="margin-top:18px">梦想点升级 <span class="badge" id="dream-badge">0 / 2</span></h2>
+            <div class="stack" id="dream-upgrade-list"></div>
+            <p style="margin-top:8px;font-size:11.5px;color:var(--text-faint);line-height:1.7">
+              梦想点是<b>成就货币</b>（每获得一个非重复加成 +1，永不重置）。
+              暗物质工程里只有第一个升级烧梦想点。
+            </p>
+
+            <h2 style="margin-top:18px">量子涨落捕获</h2>
+            <div class="detail" style="margin-bottom:10px">
+              <div><span>已捕获</span><b id="quantum-pairs" class="glow-dm">0 对</b></div>
+              <div><span>下一对需要</span><b id="quantum-next-cost">1e10 ZPE</b></div>
+              <div><span>当前 ZPE</span><b id="quantum-cur-zpe">0</b></div>
+            </div>
+            <div class="bar" style="margin-bottom:12px"><i id="quantum-bar" style="background:linear-gradient(90deg,#5a0d08,#ff3b30)"></i><span id="quantum-bar-text">0%</span></div>
+
+            <div class="detail">
+              <div><span>熵生产倍率</span><b id="quantum-mult" class="glow-dm">×1.00</b></div>
+              <div><span>暗能量获取</span><b id="quantum-degain" class="glow-red">×1.00</b></div>
+              <div><span>暗能量倍率</span><b id="quantum-demult" class="glow-accent">×1.00</b></div>
+              <div><span>指数成长速率</span><b id="quantum-grow" class="glow-accent">0.000 阶/秒</b></div>
+            </div>
+            <p style="margin-top:10px;font-size:11.5px;color:var(--text-faint);line-height:1.7">
+              每捕获一对量子，<b>熵生产倍率 ×(1+量子数)</b>（线性），
+              <b>ZPE 产出倍率 ×(1+log10 量子数)</b>（对数）。<br>
+            </p>
+          </div>
+        </div>
+
+        <!-- ══ 面板：无限（金色）══ -->
+        <div class="tab-panel" id="panel-infinity" hidden>
+
+          <div id="inf-locked" class="locked">
+            <span class="big">&#8734;</span>
+            无限系统未解锁
+            <div class="cond">需要基础物质达到 <b id="inf-need">1e308.2547</b></div>
+          </div>
+
+          <div id="inf-content" hidden>
+            <div class="detail" style="margin-bottom:12px">
+              <div><span>无限点</span><b id="val-infinity" class="glow-gold">0</b></div>
+              <div><span>已大坍缩</span><b id="bigcrunch-count">0</b></div>
+              <div><span>触发阈值</span><b id="bigcrunch-need">1e308.2547</b></div>
+              <div><span>本次可得</span><b id="bigcrunch-gain" class="glow-gold">1</b></div>
+            </div>
+
+            <button class="btn zone zone-dm" id="btn-bigcrunch" disabled>
+              <div class="btn-row">
+                <span class="btn-name">大坍缩</span>
+                <span class="btn-lv" id="bigcrunch-status">未打破无限</span>
+              </div>
+              <div class="btn-desc" id="bigcrunch-desc">物质到 1e308.25 会<b>强制</b>大坍缩（收益固定）</div>
+            </button>
+
+            <button class="btn" id="btn-break-infinity" hidden>
+              <div class="btn-row">
+                <span class="btn-name">打破无限</span>
+                <span class="btn-lv" id="break-state">花 1 无限点</span>
+              </div>
+              <div class="btn-desc">解除物质上限；大坍缩改为<b>手动</b>，收益随深度增长 —— 这就是超过 e308.25 之后的「削弱」</div>
+            </button>
+
+            <h2 style="margin-top:18px">大坍缩会重置</h2>
+            <div class="detail">
+              <div><span>物质 / 粒子 / 熵 / 熵阱</span><b>归零</b></div>
+              <div><span>三条升级等级</span><b>归零</b></div>
+              <div><span>ZPE / 暗能量</span><b>归零</b></div>
+              <div><span>量子</span><b>归零</b></div>
+              <div><span>无限点</span><b class="glow-gold">保留</b></div>
+              <div><span>梦想点</span><b class="rainbow">保留</b></div>
+              <div><span>虚空升级 / 两种里程碑</span><b class="glow-green">保留</b></div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // 模块加载失败时给明确提示（老浏览器 / 双击打开）
+  window.addEventListener("error", (e) => {
+    const msg = String(e.message || "");
+    if (msg.includes("import") || msg.includes("module") || msg.includes("specifier")) {
+      const el = document.getElementById("fatal");
+      el.style.display = "block";
+      el.textContent =
+        "模块加载失败：\n" + msg + "\n\n" +
+        "最常见的原因：你是双击 index.html 打开的。\n" +
+        "file:// 协议下浏览器会拦掉 ES 模块。\n\n" +
+        "正确做法：\n" +
+        "  node serve.mjs       然后开 http://127.0.0.1:8321/\n" +
+        "  或者在 VSCode 里按 F5";
+    }
+  }, true);
+</script>
+
+<script type="module" src="./src/main.js"></script>
+
+</body>
+</html>
