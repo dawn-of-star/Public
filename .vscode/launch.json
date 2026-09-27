@@ -28,6 +28,33 @@
       "url": "http://127.0.0.1:8321/",
       "webRoot": "${workspaceFolder}",
       "presentation": { "group": "2-分开用", "order": 1 }
+    },
+    {
+      "name": "🖥 Electron：调试桌面端主进程",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/electron/dist/electron.exe",
+      "runtimeArgs": ["."],
+      "windows": {
+        "runtimeExecutable": "${workspaceFolder}/node_modules/electron/dist/electron.exe"
+      },
+      "console": "integratedTerminal",
+      "skipFiles": ["<node_internals>/**"],
+      "presentation": { "group": "3-桌面端", "order": 1 }
+    },
+    {
+      "name": "🖥 Electron：端到端自检（smoke）",
+      "type": "node",
+      "request": "launch",
+      "cwd": "${workspaceFolder}",
+      "runtimeExecutable": "${workspaceFolder}/node_modules/electron/dist/electron.exe",
+      "runtimeArgs": ["--no-sandbox", "tools/smoke-electron.cjs"],
+      "windows": {
+        "runtimeExecutable": "${workspaceFolder}/node_modules/electron/dist/electron.exe"
+      },
+      "console": "integratedTerminal",
+      "presentation": { "group": "3-桌面端", "order": 2 }
     }
   ]
 }
