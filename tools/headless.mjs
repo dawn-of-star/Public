@@ -12,14 +12,14 @@
  */
 
 import Decimal from "../dist/break_eternity.esm.js";
-import { BASE, DE_UPGRADES, REPEATABLE, VOID_UPGRADES, ZPE_EXPONENT, computeS } from "../src/config.js";
+import { BASE, DE_MILESTONES, DE_UPGRADES, REPEATABLE, VOID_UPGRADES, ZPE_EXPONENT, ZPE_MILESTONES, computeS } from "../src/config.js";
 import { newState, serialize, deserialize } from "../src/state.js";
 import {
   advance, buyDeUpgrade, buyRepeatable, buyTrap, buyVoidUpgrade, doClick,
   affordableCount, snapshot, tick,
 } from "../src/engine.js";
 import {
-  conversion, darkEnergyMultiplier, globalMultiplier, zpeMultiplier,
+  conversion, darkEnergyMultiplier, floorDiv, globalMultiplier, zpeMultiplier,
   zpeProductionPenalty, darkEnergyGainPerConversion,
 } from "../src/formulas.js";
 
@@ -70,7 +70,7 @@ if (process.argv.includes("--check")) process.exit(S < 1 ? 0 : 1);
 
 // ══════════════════════════════════════════════════════════
 console.log("=".repeat(78));
-console.log("定点验证：三个已修的 bug");
+console.log("定点验证：四个已修的 bug");
 console.log("=".repeat(78));
 console.log();
 
@@ -124,6 +124,33 @@ console.log();
 }
 console.log();
 
+// ── 修 4：整数除法不能被 Decimal 的舍入带偏（否则熵余量变负）──
+{
+  // 真实抓到的样本：x/y 真值 = 481675594906810.94，落在整数下方，
+  // 而 Decimal 的 div 只保留约 15 位有效数字，把它抬成了 481675594906811。
+  const x = new Decimal("16215948575620.594");
+  const y = new Decimal("0.033665705190560606");
+  const naive = x.div(y).floor();
+  const safe = floorDiv(x, y);
+  const badRem = x.sub(naive.mul(y));
+  const goodRem = x.sub(safe.mul(y));
+  console.log(`  ④ 熵 → 粒子的转换次数：整数除法不许被舍入带偏`);
+  console.log(`     x/y 真值 481675594906810.94 -> floor 应该是 …810`);
+  console.log(`     x.div(y).floor() = ${naive.toString()}   余量 ${badRem.toString()}  ← 负的，界面显示「余 -0.0019」`);
+  console.log(`     floorDiv(x, y)   = ${safe.toString()}   余量 ${goodRem.toString()}`);
+  const ok4 = safe.eq(481675594906810) && goodRem.gte(0);
+  console.log(`     ${ok4 ? "✅ 余量非负" : "❌ 仍然会为负"}`);
+
+  // 「买满」不能因为同一个舍入白跑：反推出的级数要多算一格时，必须自己下调整
+  const st = newState();
+  st.resources.particle = new Decimal("1e9");
+  const canBuy = affordableCount(st, "particleBoost");
+  const bought = buyRepeatable(st, "particleBoost", true);
+  console.log(`     「买满」：显示可买 ${canBuy} 级 -> 实际买到 ${bought} 级，` +
+    `余 ${fmt(st.resources.particle)} 粒子  ${bought > 0 && st.resources.particle.gte(0) ? "✅" : "❌ 白跑/透支"}`);
+}
+console.log();
+
 // ══════════════════════════════════════════════════════════
 const HOURS = arg("hours", 2);
 console.log("=".repeat(78));
@@ -149,6 +176,8 @@ let t = 0;
 for (let i = 0; i < 10; i++) doClick(state);
 
 const BUY_ORDER = ["particleBoost", "matterBoost", "entropyCoeff"];
+/** 熵余量出现负数的步数（必须是 0） */
+let negEntropySteps = 0;
 
 while (t < MAX) {
   // ★ 模拟玩家点击：熵阱还没起来的时候靠手点（这是开局唯一的熵来源）
@@ -168,6 +197,9 @@ while (t < MAX) {
 
   tick(state, DT);
   t += DT;
+
+  // ★ 兜底不变量：熵余量永远不该是负数（Decimal 的 div 舍入曾经让它变负）
+  if (state.resources.entropy.lt(0)) negEntropySteps++;
 
   if (nextReport < REPORT_AT.length && t >= REPORT_AT[nextReport]) {
     const s = snapshot(state);
@@ -205,8 +237,9 @@ console.log();
 console.log(`  升级等级       全局 ${state.levels.particleBoost.toNumber()} / 物质 ${state.levels.matterBoost.toNumber()} / 凝聚 ${state.levels.entropyCoeff.toNumber()}`);
 const voidOwned = Object.entries(state.voidUpgrades).filter(([, v]) => v).map(([k]) => k);
 console.log(`  虚空升级       ${voidOwned.length}/9  ${voidOwned.join(" ") || "(无)"}`);
-console.log(`  ZPE 里程碑     ${Object.values(state.zpeMilestones).filter(Boolean).length}/6`);
-console.log(`  暗能量里程碑   ${Object.values(state.deMilestones).filter(Boolean).length}/6`);
+console.log(`  ZPE 里程碑     ${Object.values(state.zpeMilestones).filter(Boolean).length}/${ZPE_MILESTONES.length}`);
+console.log(`  暗能量里程碑   ${Object.values(state.deMilestones).filter(Boolean).length}/${DE_MILESTONES.length}`);
+console.log(`  熵余量为负的步数 ${negEntropySteps}  ${negEntropySteps === 0 ? "✅" : "❌ 整数除法又踩到舍入了"}`);
 
 function finalSnapshot(st) {
   return snapshot(st);

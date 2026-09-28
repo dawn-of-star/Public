@@ -22,6 +22,51 @@ import { deLevelOf, hasDe, hasV9, hasVoid, hasZpe, levelOf } from "./state.js";
 const D = (v) => new Decimal(v ?? 0);
 export { D };
 
+/**
+ * `floor(x / y)`，并且**对 Decimal 除法的舍入免疫**。
+ *
+ * ⚠️ 这是一个真踩过的坑，不要退回 `x.div(y).floor()`：
+ *
+ *   break_eternity 的 `div` 只保留约 15~16 位有效数字，商会被**四舍五入**。
+ *   当真实商非常接近整数、但落在整数下方时，`div` 会把它抬到整数上，
+ *   于是 `floor()` 多出一格：
+ *
+ *       x = 16215948575620.594        y = 0.033665705190560606
+ *       真值   x/y = 481675594906810.94   -> floor = …810
+ *       div 给出   481675594906811       -> floor = …811   ← 多一格
+ *
+ *   后果（实测）：熵 → 粒子的转换多扣一次阈值，余量变成
+ *   **-0.001953125**，界面上出现「余 -0.0019」这种负数。
+ *   同一类隐患也在所有「闭式解反推买得起几级」的地方。
+ *
+ * 所以这里向下取整之后再回退校验一次：`q×y` 不许超过 `x`。
+ * 最多退 4 次（真实误差只有 1 格，写 4 是为了防御性），常数代价。
+ */
+export function floorDiv(x, y) {
+  let q = x.div(y).floor();
+  for (let i = 0; i < 4 && q.gt(0) && q.mul(y).gt(x); i++) q = q.sub(1);
+  return q;
+}
+
+/** 等比数列前 n 项和：`first × (r^n − 1)/(r − 1)`（r = 1 时退化成 first×n） */
+export function geometricSum(first, r, n) {
+  return r === 1
+    ? first.mul(n)
+    : first.mul(Decimal.pow(r, n).sub(1)).div(r - 1);
+}
+
+/**
+ * 把「闭式解反推出的级数」下调到**真正买得起**的那一档。
+ *
+ * `log`/`div` 都有舍入，反推出来的 n 偶尔会比实际能买的级数多 1，
+ * 此时总价会略微超过资源 —— 老代码是直接 `return 0`（玩家点了「买满」却什么都没发生）。
+ */
+export function clampToAffordable(first, r, pool, n) {
+  let k = n;
+  for (let i = 0; i < 4 && k > 1 && pool.lt(geometricSum(first, r, k)); i++) k -= 1;
+  return k;
+}
+
 // ══════════════════════════════════════════════════════════
 // 全局倍率
 // ══════════════════════════════════════════════════════════

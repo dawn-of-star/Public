@@ -18,7 +18,7 @@ import {
 import {
   bigCrunchGain, canBigCrunch, collapseUnlocked, conversion, darkEnergyMultiplier,
   darkEnergyRate, dreamCoefficient,
-  effectiveTraps, effectiveZpeMultiplierForPrice, entropyRate, globalAddTerm,
+  effectiveTraps, entropyRate, globalAddTerm,
   globalMultiplier, isAutoAcquire, matterRate, particleRate, repeatableCost, trapCost,
   voidUpgradeCost, zpeBaseMultiplier, zpeMultiplier, zpeProductionPenalty, zpeRate,
   deUpgradeCost,
@@ -368,6 +368,9 @@ function effectText(state, id) {
 // 渲染
 // ══════════════════════════════════════════════════════════
 
+/** 上一次渲染进日志面板的内容签名（见 render() 里的说明） */
+let lastLogSig = "";
+
 export function render(state) {
   const R = state.resources;
 
@@ -487,7 +490,8 @@ export function render(state) {
         : `花费 ${fmt(cost)} ZPE`;
   }
   el["void-count"].textContent = String(voidOwned);
-  el["tab-tag-void"].textContent = `${voidOwned}/9`;
+  // ★ 总数从 config 推导，不写死 9 —— 加第 10 个虚空升级时这里要跟着变
+  el["tab-tag-void"].textContent = `${voidOwned}/${Object.keys(VOID_UPGRADES).length}`;
   el["zpe-multiplier"].textContent = fmtMult(zpeMultiplier(state));
 
   // ── ZPE 里程碑 ──
@@ -613,9 +617,17 @@ export function render(state) {
   renderInfinity(state);
 
   // ── 日志 ──
+  //
+  // ⚠️ 判据不能只看**条数**（原来就是 `childElementCount !== state.log.length`）。
+  //    state.log 有 LOG_MAX = 60 的上限，一旦写满，长度永远是 60、
+  //    DOM 里也永远有 60 个子元素 —— 两边相等，于是**日志面板从此再也不刷新**，
+  //    玩家看到的是冻结的旧消息（实测：第 61 条之后一条都进不去）。
+  //    正确判据是「最近一条」的身份：长度 + 时间戳 + 文本。
   const logEl = el["log-panel"];
-  const want = state.log.length;
-  if (logEl.childElementCount !== want) {
+  const lastLog = state.log[state.log.length - 1];
+  const logSig = `${state.log.length}|${lastLog ? lastLog.t : 0}|${lastLog ? lastLog.text : ""}`;
+  if (logSig !== lastLogSig) {
+    lastLogSig = logSig;
     logEl.innerHTML = state.log
       .map((e) => {
         const t = new Date(e.t);

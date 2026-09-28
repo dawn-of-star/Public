@@ -6,6 +6,20 @@
 
 ---
 
+## ⚠️ 重点声明（请先阅读）
+
+> **本游戏的设计、大部分代码与灵感均参考自《反物质维度》（Antimatter Dimensions，简称 AD）。**
+>
+> - **原版 AD 源码**：https://github.com/IvarK/AntimatterDimensionsSourceCode （MIT 许可）
+> - **原版 AD 网页版仓库**：https://github.com/IvarK/IvarK.github.io
+> - **原版 AD 在线试玩**：https://ivark.github.io/
+>
+> **本项目的大多数代码由 AI 开发**，人工主要负责提出需求、验证与调整。
+>
+> 本项目并非 AD 的官方续作或衍生作品，与 AD 原作者（Hevipelle 及 IvarK 等贡献者）**无任何隶属或授权关系**；AD 的一切著作权归其原作者所有。本项目遵循 MIT 许可，如原作者认为本项目存在不当之处，请联系后我会立即处理。
+
+---
+
 ## 三种拿到游戏的方式
 
 | 你想干嘛 | 用什么 | 需要装什么 |
@@ -52,7 +66,7 @@ test-034/
 ├── .github/workflows/           GitHub Actions：打 tag 自动构建 exe 并发 Release
 ├── .vscode/                     VSCode 配置（F5 / 任务都在这）
 ├── index.html                   ★ 唯一入口（AMOLED，走 src/）
-├── css/amoled.css               AMOLED 主题（配色取自 Antares Dimensions）
+├── css/amoled.css               AMOLED 主题（配色取自 Antimatter Dimensions）
 ├── serve.mjs                    零依赖静态服务器（浏览器开发用）
 ├── package.json                 版本号 + 依赖 + 打包配置（build 字段）
 ├── .npmrc                       Electron 下载源换成国内镜像

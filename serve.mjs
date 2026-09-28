@@ -43,9 +43,25 @@ const MIME = {
   ".wasm": "application/wasm",
 };
 
-/** 把 URL 路径安全地映射到磁盘路径，挡住 ../ 穿越。 */
+/**
+ * 把 URL 路径安全地映射到磁盘路径，挡住 ../ 穿越。
+ *
+ * ⚠️ 和 electron/static-protocol.cjs 的 resolveSafe() 保持同一套语义：
+ *   · 非法百分号转义 -> null（403），不要让它冒成 500
+ *   · 路径里出现 `..` 段 -> 直接 null（403）
+ *     不显式拦的话，path.normalize 会把「根之上」的 .. 丢掉，
+ *     于是 /%2e%2e%2fpackage.json 会静悄悄地把项目自己的文件伺服出去
+ *     （出不了根目录，所以不是漏洞，但语义含糊、也不好排查）
+ */
 function resolveSafe(urlPath) {
-  const decoded = decodeURIComponent(urlPath.split("?")[0].split("#")[0]);
+  let decoded;
+  try {
+    decoded = decodeURIComponent(urlPath.split("?")[0].split("#")[0]);
+  } catch {
+    return null; // 非法百分号转义
+  }
+  if (decoded.split(/[/\\]+/).includes("..")) return null;
+
   const normalized = normalize(decoded).replace(/^([/\\])+/, "");
   const target = join(ROOT, normalized);
   if (target !== ROOT && !target.startsWith(ROOT + sep)) return null;
@@ -56,7 +72,7 @@ const server = createServer(async (req, res) => {
   try {
     let target = resolveSafe(req.url ?? "/");
     if (!target) {
-      res.writeHead(403).end("403 Forbidden");
+      res.writeHead(403, { "content-type": "text/plain; charset=utf-8" }).end("403 Forbidden");
       return;
     }
 

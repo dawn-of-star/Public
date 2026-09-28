@@ -340,6 +340,68 @@ console.log();
 }
 console.log();
 
+// ══════════════════════════════════════════════════════════
+// 第五部分：**失败的交易不许扣钱** + 大坍缩的「本轮进度」必须归零
+// ══════════════════════════════════════════════════════════
+console.log("─".repeat(80));
+console.log("  回归守卫：失败的购买不扣钱；大坍缩清掉本轮累加器");
+console.log("─".repeat(80));
+console.log();
+{
+  const results = [];
+  const check = (label, fn) => {
+    let ok = false, detail = "";
+    try { ({ ok, detail } = fn()); } catch (e) { detail = `${e.constructor.name}: ${e.message}`; }
+    results.push(ok);
+    console.log(`  ${ok ? "✅" : "❌"} ${pad(label, 34)} ${detail}`);
+  };
+
+  // ① 双价（梦想点 + ZPE）升级买不起时，梦想点不许被扣掉
+  //
+  //    老写法是「先扣梦想点 -> 再查 ZPE -> 不够就 return false」，
+  //    扣掉的那点不会退回来。当前配置里 v9 的 ZPE 价是 0 所以碰不到，
+  //    这里临时合成一条双价升级，把这个坑钉死。
+  check("双价升级买不起：梦想点不扣", () => {
+    VOID_UPGRADES.__probe = {
+      id: "__probe", name: "回归守卫·双价", cost: "1000",
+      costDream: 1, desc: "临时配置，仅用于自检", rewardDream: false,
+    };
+    try {
+      const s = freeze(runToDePhase());
+      // ⚠️ runToDePhase 会遍历 VOID_UPGRADES 自动买 —— 可能已经把 __probe 买掉了。
+      //    必须显式重置，否则这条自检会「因为已拥有」而假通过。
+      s.voidUpgrades.__probe = false;
+      s.dreamPoints = D(1);
+      s.zpe = D(0);                       // ZPE 不够 -> 必须整笔失败
+      const before = s.dreamPoints.toString();
+      const bought = buyVoidUpgrade(s, "__probe");
+      const after = s.dreamPoints.toString();
+      const ok = bought === false && before === after;
+      return { ok, detail: `买成功=${bought}？ 梦想点 ${before} -> ${after}` };
+    } finally {
+      delete VOID_UPGRADES.__probe;
+    }
+  });
+
+  // ② 大坍缩后相变环进度必须归零（界面读的是 deAccum，不是 zpeAccumulator）
+  check("大坍缩后 deAccum 归零", () => {
+    const s = freeze(runToDePhase());
+    const cap = D("1e308.2547");
+    s.resources.matter = cap.mul(2);
+    s.peakMatter = cap.mul(2);
+    s.deAccum = D(5e7);
+    const before = s.deAccum.toString();
+    const r = doBigCrunch(s);
+    const ok = !!r && !s.deAccum.gt(0) && !s.zpeAccumulator.gt(0);
+    return { ok, detail: `deAccum ${before} -> ${s.deAccum.toString()}（坍缩返回 ${r ? "ok" : "null"}）` };
+  });
+
+  const bad = results.filter((x) => !x).length;
+  pricePass += results.length - bad;
+  priceFail += bad;
+}
+console.log();
+
 console.log("=".repeat(80));
 console.log(`  结果：速率 ${pass} 一致 / ${fail} 不一致；其他 ${pricePass} 通过 / ${priceFail} 失败`);
 console.log("=".repeat(80));

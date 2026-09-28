@@ -20,14 +20,14 @@
 
 import Decimal from "../dist/break_eternity.esm.js";
 import {
-  BASE, BREAK_INFINITY, COLLAPSE, DE_UPGRADES, DREAM_BY_ID, QUANTUM, REPEATABLE,
+  BASE, BREAK_INFINITY, CRUNCH_AT_LABEL, DE_UPGRADES, DREAM_BY_ID, QUANTUM, REPEATABLE,
   VOID_UPGRADES, crunchThreshold, piecewiseDeCost, dreamUpgradeEffects, infinityPointGain, quantumGrowthRate,
   quantumZpeRequirement,
 } from "./config.js";
 import {
   D, canBigCrunch, checkDeMilestones, checkZpeMilestones, collapseUnlocked,
-  conversion, darkEnergyGainPerConversion, darkEnergyRate, deUpgradeCost, effectiveTraps,
-  effectiveZpeMultiplierForPrice, entropyRate, globalMultiplier, isAutoAcquire,
+  clampToAffordable, conversion, darkEnergyGainPerConversion, darkEnergyRate, deUpgradeCost, effectiveTraps,
+  entropyRate, floorDiv, geometricSum, globalMultiplier, isAutoAcquire,
   kindProduct, matterRate, particleRate, repeatableCost, trapCost, voidUpgradeCost,
   zpeMultiplier, zpeRate,
 } from "./formulas.js";
@@ -81,8 +81,15 @@ export function tick(state, dt) {
     // ★ 原稿是 while (entropy >= threshold) 逐次扣减 —— 后期一 tick 转几万次会卡死。
     //   改成除法一次算完，O(1)。
     //   （原来这里有一个旧量子升级「余量回收」的分支，整套系统已删除。）
-    const times = entropy.div(threshold).floor();
+    //
+    // ⚠️ 必须用 floorDiv，不能写 `entropy.div(threshold).floor()`：
+    //    Decimal 的 div 只有 ~15 位有效数字，商会被四舍五入抬到整数上，
+    //    floor 就多一格，余量变成负数（实测「余 -0.001953125」）。
+    //    见 formulas.js 的 floorDiv 注释。
+    const times = floorDiv(entropy, threshold);
     entropy = entropy.sub(times.mul(threshold));
+    // 兜底：即使 floorDiv 后仍有极小的负余量，也不许存负数
+    if (entropy.lt(0)) entropy = D(0);
     particleGain = times.mul(output);
   }
   state.resources.entropy = entropy;
@@ -165,8 +172,9 @@ export function tick(state, dt) {
   if (collapseUnlocked(state) || state.phaseTransmuterUnlocked) {
     const th = D(BASE.darkEnergyThreshold);
     const acc = state.deAccum.add(zpeRate(state).mul(dt));
-    // Decimal 没有 mod，用 acc - floor(acc/th)*th
-    state.deAccum = acc.lt(th) ? acc : acc.sub(acc.div(th).floor().mul(th));
+    // Decimal 没有 mod，用 acc - floor(acc/th)*th（floorDiv 防舍入，见 formulas.js）
+    state.deAccum = acc.lt(th) ? acc : acc.sub(floorDiv(acc, th).mul(th));
+    if (state.deAccum.lt(0)) state.deAccum = D(0);
   }
 
   // ── 8. 层间重置（**由外到内**）──
@@ -324,22 +332,23 @@ export function buyRepeatable(state, id, max = false) {
 
   const r = cfg.costMult;
   const first = repeatableCost(state, id);
-
-  // 闭式解求总价：等比数列前 n 项和
-  const total = r === 1
-    ? first.mul(n)
-    : first.mul(Decimal.pow(r, n).sub(1)).div(r - 1);
   const pool = state.resources[cfg.currency];
+
+  // 闭式解求总价：等比数列前 n 项和。
+  // ★ 反推出来的 n 可能因为 log/div 的舍入多 1 格，先下调到真买得起的档位 ——
+  //   否则「买满」按钮会静默什么都不做（pool.lt(total) -> return 0）。
+  const k = max ? clampToAffordable(first, r, pool, n) : 1;
+  const total = geometricSum(first, r, k);
   if (pool.lt(total)) return 0;
   state.resources[cfg.currency] = pool.sub(total);
 
-  addLevel(state, id, n);
+  addLevel(state, id, k);
   if (cfg.firstRewardDream && !state.firstPurchase[id]) {
     state.firstPurchase[id] = true;
     state.dreamPoints = state.dreamPoints.add(1);
     pushLog(state, `💭 首次购买「${cfg.name}」，获得 1 梦想点`);
   }
-  return n;
+  return k;
 }
 
 /** 还能买几个（闭式解，O(1)） */
@@ -353,7 +362,9 @@ export function affordableCount(state, id) {
   // n = floor( log_r( pool×(r-1)/firstCost + 1 ) )
   const ratio = pool.mul(r - 1).div(firstCost).add(1);
   const n = ratio.log(r).floor().toNumber();
-  return Number.isFinite(n) && n > 0 ? Math.min(n, 1e7) : 0;
+  if (!Number.isFinite(n) || n <= 0) return 0;
+  // ★ 显示的数量也必须是「真的买得起」的数量（log 同样有舍入）
+  return Math.min(clampToAffordable(firstCost, r, pool, Math.min(n, 1e7)), 1e7);
 }
 
 /**
@@ -373,19 +384,20 @@ export function buyTrap(state, max = false) {
   let k = 1;
   if (max) {
     if (r <= 1) {
-      k = Math.min(1e7, pool.div(first).floor().toNumber());
+      k = Math.min(1e7, floorDiv(pool, first).toNumber());
     } else {
       const ratio = pool.mul(r - 1).div(first).add(1);
       k = Math.floor(ratio.log(r).toNumber());
+      if (!Number.isFinite(k) || k < 1) k = 1;
+      // ★ 反推的 k 可能多一格（见 formulas.js 的 clampToAffordable）
+      k = clampToAffordable(first, r, pool, Math.min(k, 1e7));
     }
     if (!Number.isFinite(k) || k < 1) k = 1;
     k = Math.min(k, 1e7);
   }
 
   if (!auto) {
-    const total = r === 1
-      ? first.mul(k)
-      : first.mul(Decimal.pow(r, k).sub(1)).div(r - 1);
+    const total = geometricSum(first, r, k);
     if (pool.lt(total)) return 0;
     state.resources.matter = pool.sub(total);
   }
@@ -398,15 +410,16 @@ export function buyVoidUpgrade(state, id) {
   const cfg = VOID_UPGRADES[id];
   if (!cfg || state.voidUpgrades[id]) return false;
 
-  if (cfg.costDream) {
-    if (state.dreamPoints.lt(cfg.costDream)) return false;
-    state.dreamPoints = state.dreamPoints.sub(cfg.costDream);
-  }
+  // ★ 先把**两项**价格都验完再扣款。
+  //   老写法是「先扣梦想点 -> 再查 ZPE」，如果 ZPE 不够就直接 return false，
+  //   扣掉的梦想点不会退回来（白扣）。现在 v9 的 ZPE 价格是 0 所以碰不到，
+  //   但只差一条带 dream + zpe 双价的升级就会踩上。
   const cost = voidUpgradeCost(state, id);
-  if (cost.gt(0)) {
-    if (state.zpe.lt(cost)) return false;
-    state.zpe = state.zpe.sub(cost);
-  }
+  if (cfg.costDream && state.dreamPoints.lt(cfg.costDream)) return false;
+  if (cost.gt(0) && state.zpe.lt(cost)) return false;
+
+  if (cfg.costDream) state.dreamPoints = state.dreamPoints.sub(cfg.costDream);
+  if (cost.gt(0)) state.zpe = state.zpe.sub(cost);
 
   state.voidUpgrades[id] = true;
   pushLog(state, `⚡ 购买虚空升级「${cfg.name}」`);
@@ -517,12 +530,9 @@ function autoBuyDeUpgrade(state, id) {
   if (!Number.isFinite(k) || k < 1) return 0;
   k = Math.min(k, 1e6);
 
-  // 浮点误差兜底：算出来的总价可能略微超过资源
-  let total = base.mul(Decimal.pow(r, k).sub(1)).div(r - 1);
-  if (pool.lt(total) && k > 1) {
-    k -= 1;
-    total = base.mul(Decimal.pow(r, k).sub(1)).div(r - 1);
-  }
+  // 浮点误差兜底：算出来的总价可能略微超过资源（抽到 formulas.js 里了）
+  k = clampToAffordable(base, r, pool, k);
+  const total = geometricSum(base, r, k);
   if (pool.lt(total)) return 0;
 
   if (isDarkEnergy) state.darkEnergy = pool.sub(total);
@@ -607,6 +617,12 @@ function resetForCollapse(state) {
   state.zpe = D(0);
   state.darkEnergy = D(0);
   // 累积器无论如何都清（它是「本轮进度」，不是资产）
+  //
+  // ★ 这里原来清的是 `state.zpeAccumulator` —— 那是**旧模型的死字段**，
+  //   全项目只有「新建 / 序列化 / 这一行」碰它，界面读的是 `state.deAccum`。
+  //   于是相变环的进度在大坍缩后**留了下来**，和「本轮进度归零」的意图相反。
+  //   两个都清：deAccum 是活的，zpeAccumulator 留给旧存档一个干净的默认值。
+  state.deAccum = D(0);
   state.zpeAccumulator = D(0);
 }
 
@@ -633,8 +649,6 @@ function resetForCollapse(state) {
 export function doBigCrunch(state) {
   if (!canBigCrunch(state)) return null;
 
-  const matterLog10 = state.resources.matter.log10();
-
   const ip = infinityPointGain(state.resources.matter, state.brokenInfinity);
 
   state.infinityPoints = state.infinityPoints.add(ip);
@@ -648,8 +662,9 @@ export function doBigCrunch(state) {
   state.quantum = D(0);
   state.quantumPairs = D(0);
 
-  const n = state.bigCrunchCount.toNumber();
-  pushLog(state, `🌌 大坍缩！物质触及 1e308.25 上限，获得 ${ip.toString()} 无限点（共 ${state.infinityPoints.toString()}）`);
+  // ★ 阈值文案从 config 取（CRUNCH_AT_LABEL），不要手写 "1e308.25" ——
+  //   手写的那个和实际用的 log10(Number.MAX_VALUE) = 1e308.2547 差 0.25 个数量级。
+  pushLog(state, `🌌 大坍缩！物质触及 ${CRUNCH_AT_LABEL} 上限，获得 ${ip.toString()} 无限点（共 ${state.infinityPoints.toString()}）`);
   // ⚠️ 这里曾经有一行 `pushLog(... 量子 +${q.toString()} ...)`，以及
   //    `return { infinityPoints: ip, quantum: q }` —— 但 v3 量子模型
   //    已经删掉了「大坍缩给量子」，`q` 这个变量不复存在。

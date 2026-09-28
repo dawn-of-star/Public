@@ -41,6 +41,18 @@ function makeEl(tag = "div", id = "") {
     _classes: new Set(),
     get className() { return [...this._classes].join(" "); },
     set className(v) { this._classes = new Set(String(v).split(/\s+/).filter(Boolean)); },
+    /**
+     * 真实浏览器的 childElementCount。
+     * 桩里只有两种子元素：
+     *   · innerHTML 里带 id="..." 的（已登记进 _children）
+     *   · 日志面板那种不带 id 的 <div class="le">（只能从 innerHTML 数）
+     * ⚠️ 少了这个属性，ui.js 里「靠子元素个数判断要不要重画日志」那类
+     *    bug 会在桩上**永远看不出来**（undefined !== 60 恒真 = 每帧都重画）。
+     */
+    get childElementCount() {
+      const fromHtml = (this._innerHTML.match(/<div class="le">/g) ?? []).length;
+      return Math.max(this._children.length, fromHtml);
+    },
     classList: {
       add: (...c) => c.forEach((x) => node._classes.add(x)),
       remove: (...c) => c.forEach((x) => node._classes.delete(x)),
@@ -292,4 +304,36 @@ if (state) {
 }
 console.log();
 
-process.exit(caught ? 1 : 0);
+// ══════════════════════════════════════════════════════════
+// 回归守卫：日志面板在写满 LOG_MAX（60）条之后必须还在刷新
+// ══════════════════════════════════════════════════════════
+// 踩过：render() 判断「要不要重画日志」用的是
+//     logEl.childElementCount !== state.log.length
+//   state.log 的上限正好是 60。写满之后长度恒为 60、
+//   DOM 子元素也恒为 60 —— 两边永远相等，于是日志面板**冻在旧内容上**，
+//   第 61 条以后一条都不显示（只有刷新页面清空日志才恢复）。
+// 这个守卫就是防止有人把那行判断改回去。
+let logGuard = "未跑";
+if (state) {
+  const { pushLog } = await import(new URL("../src/state.js", import.meta.url).href);
+  // ★ 必须**一条一条**地灌、每条之间都渲染一次。
+  //   一次灌 70 条再渲染是抓不到这个 bug 的：那时 DOM 里的条数还是旧的，
+  //   「条数不等」仍然成立，于是最后一次渲染恰好把最新一条画了进去。
+  for (let i = 1; i <= 70; i++) {
+    pushLog(state, `回归守卫 #${i}`);
+    // 渲染节流到 20fps（50ms），16.67ms/帧 —— 推 3 帧必轮到一次 render
+    for (let k = 0; k < 3; k++) {
+      simNow += 16.67;
+      const fn = rafQueue.shift();
+      if (fn) fn(simNow);
+    }
+  }
+  const html = byId.get("log-panel")?._innerHTML ?? "";
+  const ok = html.includes("回归守卫 #70");
+  logGuard = ok ? "✅ 写满 60 条后仍会刷新" : "❌ 日志面板写满 60 条后冻结了";
+  console.log(`  日志面板刷新    ${logGuard}`);
+  console.log();
+}
+const guardFailed = typeof logGuard === "string" && logGuard.startsWith("❌");
+
+process.exit(caught || guardFailed ? 1 : 0);

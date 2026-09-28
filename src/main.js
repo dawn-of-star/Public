@@ -120,7 +120,15 @@ const handlers = {
     flashSave();
   },
   onExport() {
-    const json = JSON.stringify(JSON.parse(localStorage.getItem(BASE.saveKey) ?? "{}"));
+    // ★ 先把当前状态写进 localStorage 再取 —— 否则导出的是「上一次自动存档」
+    //   的内容（最多差 15 秒），而且刚开局还没存过档时会导出一个空的 "{}"。
+    save(state);
+    const json = localStorage.getItem(BASE.saveKey) ?? "";
+    if (!json) {
+      pushLog(state, "⚠️ 没有可导出的存档");
+      afterAction();
+      return;
+    }
     navigator.clipboard?.writeText(json).then(
       () => pushLog(state, "📋 存档已复制到剪贴板"),
       () => pushLog(state, "⚠️ 复制失败，请手动从控制台取 window.__game.export()"),
@@ -249,9 +257,12 @@ document.addEventListener("visibilitychange", () => {
 window.__game = {
   get state() { return state; },
   tick, advance, doClick,
-  buyRepeatable, buyTrap, buyVoidUpgrade, buyDeUpgrade,
+  buyRepeatable, buyTrap, buyVoidUpgrade, buyDeUpgrade, buyDreamUpgrade,
   save: () => save(state),
-  export: () => JSON.stringify(localStorage.getItem(BASE.saveKey) ?? ""),
+  // ★ 返回的是**存档 JSON 原文**（可直接粘贴）。
+  //   原来写的是 JSON.stringify(localStorage.getItem(...)) —— 那是把 JSON
+  //   再包一层引号（双重编码），控制台里复制出来根本没法用。
+  export: () => { save(state); return localStorage.getItem(BASE.saveKey) ?? ""; },
   reset: () => { clearSave(); state = newState(); render(state); },
 };
 

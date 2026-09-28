@@ -12,7 +12,7 @@
  */
 
 import Decimal from "../dist/break_eternity.esm.js";
-import { BASE, DE_UPGRADES, REPEATABLE, VOID_UPGRADES, computeS } from "../src/config.js";
+import { BASE, DE_MILESTONES, DE_UPGRADES, REPEATABLE, VOID_UPGRADES, ZPE_MILESTONES, computeS } from "../src/config.js";
 import { newState } from "../src/state.js";
 import { buyDeUpgrade, buyRepeatable, buyTrap, buyVoidUpgrade, doClick, tick } from "../src/engine.js";
 import { matterRate, particleRate, globalMultiplier, zpeMultiplier } from "../src/formulas.js";
@@ -110,8 +110,8 @@ console.log("  " + "-".repeat(60));
 console.log(`    相变仪解锁（第三层开）   ${deUnlockT === null ? "未达成" : clock(deUnlockT)}`);
 console.log(`    首个虚空升级（第二层开） ${firstVoidT === null ? "未达成" : clock(firstVoidT)}`);
 console.log(`    9 个虚空升级买齐         ${allVoidT === null ? "未达成" : clock(allVoidT)}`);
-console.log(`    6 个 ZPE 里程碑全达成    ${allZpeMsT === null ? "未达成" : clock(allZpeMsT)}`);
-console.log(`    6 个暗能量里程碑全达成   ${allDeMsT === null ? "未达成" : clock(allDeMsT)}`);
+console.log(`    ${ZPE_MILESTONES.length} 个 ZPE 里程碑全达成    ${allZpeMsT === null ? "未达成" : clock(allZpeMsT)}`);
+console.log(`    ${DE_MILESTONES.length} 个暗能量里程碑全达成   ${allDeMsT === null ? "未达成" : clock(allDeMsT)}`);
 console.log();
 console.log("  ⚠️ 注意最后一行 —— 如果它在很早就达成，说明现有三层的内容");
 console.log("     在第四层之前就被吃干净了，中间会有一段「无事可做」。");
@@ -186,8 +186,8 @@ if (at25) {
   console.log(`    熵阱              ${at25.traps.toNumber().toFixed(0)}`);
   console.log(`    升级等级          ${at25.lv.particleBoost.toNumber().toFixed(0)} / ${at25.lv.matterBoost.toNumber().toFixed(0)} / ${at25.lv.entropyCoeff.toNumber().toFixed(0)}`);
   console.log(`    虚空升级          ${at25.voidN}/9`);
-  console.log(`    ZPE 里程碑        ${at25.zpeMs}/6`);
-  console.log(`    暗能量里程碑      ${at25.deMs}/6`);
+  console.log(`    ZPE 里程碑        ${at25.zpeMs}/${ZPE_MILESTONES.length}`);
+  console.log(`    暗能量里程碑      ${at25.deMs}/${DE_MILESTONES.length}`);
   console.log();
   const left = 9 - at25.voidN;
   console.log(`    => 那一刻还剩 ${left} 个虚空升级没买。`);
