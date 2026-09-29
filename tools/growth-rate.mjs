@@ -12,7 +12,7 @@ const watch = [5, 10, 15, 20, 22, 24, 25, 26, 27, 30, 40, 60];
 const done = new Set();
 
 console.log("  物质跨过各数量级时的「指数增长率」");
-console.log(`  ${pad("时刻", 8)} ${pad("物质", 10)} ${pad("d(阶)/秒", 14)} ${pad("全局倍率", 12)} ${pad("熵阱", 10)} 备注`);
+console.log(`  ${pad("时刻", 8)} ${pad("物质", 10)} ${pad("d(阶)/秒", 14)} ${pad("全局加成", 12)} ${pad("熵阱", 10)} 备注`);
 console.log("  " + "-".repeat(74));
 
 for (let i = 0; i < 20000; i++) {

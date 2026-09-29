@@ -13,7 +13,7 @@
 
 import { BASE, DE_MILESTONES } from "./config.js";
 import {
-  advance, breakInfinity, buyDeUpgrade, buyDreamUpgrade, buyRepeatable,
+  advance, breakInfinity, buyDeUpgrade, buyDreamUpgrade, buyInfinityUpgrade, buyRepeatable,
   buyTrap, buyVoidUpgrade, doBigCrunch, doClick, tick,
 } from "./engine.js";
 import { clear as clearSave, load, save } from "./save.js";
@@ -111,6 +111,13 @@ const handlers = {
   },
   onBuyDream(id) {
     if (buyDreamUpgrade(state, id)) {
+      save(state);
+      afterAction();
+    }
+  },
+  /** @param {string} id 无限升级 id（∞ 层，用无限点购买） */
+  onBuyInfinity(id) {
+    if (buyInfinityUpgrade(state, id).ok) {
       save(state);
       afterAction();
     }
@@ -257,7 +264,7 @@ document.addEventListener("visibilitychange", () => {
 window.__game = {
   get state() { return state; },
   tick, advance, doClick,
-  buyRepeatable, buyTrap, buyVoidUpgrade, buyDeUpgrade, buyDreamUpgrade,
+  buyRepeatable, buyTrap, buyVoidUpgrade, buyDeUpgrade, buyDreamUpgrade, buyInfinityUpgrade,
   save: () => save(state),
   // ★ 返回的是**存档 JSON 原文**（可直接粘贴）。
   //   原来写的是 JSON.stringify(localStorage.getItem(...)) —— 那是把 JSON
@@ -267,6 +274,6 @@ window.__game = {
 };
 
 console.log(
-  "%c[宇宙起源 v0.4]%c 控制台可用 window.__game 调试（.state / .advance(秒) / .reset()）",
+  "%c[空想增量 v0.5.1]%c 控制台可用 window.__game 调试（.state / .advance(秒) / .reset()）",
   "color:#2fa6f7;font-weight:bold", "color:#757575",
 );

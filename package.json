@@ -1,11 +1,11 @@
 {
-  "name": "cosmos-origin",
-  "version": "0.4.5",
+  "name": "kongxiang-incremental",
+  "version": "0.5.1",
   "private": true,
-  "description": "宇宙起源 —— 网页增量游戏（原生 ES 模块 + break_eternity.js，零构建）",
+  "description": "空想增量 —— 网页增量游戏（原生 ES 模块 + break_eternity.js，零构建）",
   "type": "module",
   "main": "electron/main.cjs",
-  "author": "Cosmos Origin",
+  "author": "空想增量",
   "license": "MIT",
   "scripts": {
     "serve": "node serve.mjs",
@@ -14,6 +14,11 @@
     "smoke": "node tools/smoke-protocol.cjs",
     "smoke:electron": "electron --no-sandbox tools/smoke-electron.cjs",
     "check:web": "node tools/check-web-bundle.cjs",
+    "test": "node tools/run-all.mjs",
+    "sim:infinity": "node tools/infinity-sim.mjs",
+    "sim:infinity:check": "node tools/infinity-sim.mjs --check",
+    "pace": "node tools/pace-model.mjs",
+    "pace:check": "node tools/pace-model.mjs --check",
     "dist": "electron-builder --win --x64 --publish never",
     "dist:dir": "electron-builder --win --x64 --dir --publish never"
   },
@@ -25,8 +30,8 @@
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.cosmosorigin.game",
-    "productName": "CosmosOrigin",
+    "appId": "com.kongxiang.incremental",
+    "productName": "空想增量",
     "copyright": "MIT Licensed · break_eternity.js by Patashu",
     "directories": {
       "output": "release",
@@ -42,6 +47,7 @@
       "!**/*.map"
     ],
     "compression": "normal",
+    "//产物名为什么用 ASCII": "中文 exe 名在部分下载/CI 环境下会被转义或乱码；productName 仍是「空想增量」，只影响文件名",
     "win": {
       "icon": "build/icon.ico",
       "target": [
@@ -58,7 +64,7 @@
           ]
         }
       ],
-      "artifactName": "${productName}-${version}-win-${arch}.${ext}"
+      "artifactName": "KongxiangIncremental-${version}-win-${arch}.${ext}"
     }
   }
 }

@@ -11,8 +11,8 @@
 
 import Decimal from "../dist/break_eternity.esm.js";
 import {
-  BASE, BREAK_INFINITY, COLLAPSE, DE_MILESTONES, DE_PENALTY, DE_UPGRADES,
-  REPEATABLE, piecewiseDeCost,
+  BASE, BREAK_INFINITY, CLIMB, COLLAPSE, DE_MILESTONES, DE_PENALTY, DE_UPGRADES, INFINITY_UPGRADES, OVERLOAD,
+  REPEATABLE, piecewiseDeCost, overloadThreshold, infinityRateMult,
   VOID_UPGRADES, ZPE_EXPONENT, ZPE_MILESTONES, crunchThreshold,
   infinityPointGain, quantumDeGainBonus, quantumDeMultBonus,
   quantumEntropyMultiplier, quantumGrowthRate, dreamUpgradeEffects,
@@ -68,7 +68,7 @@ export function clampToAffordable(first, r, pool, n) {
 }
 
 // ══════════════════════════════════════════════════════════
-// 全局倍率
+// 全局加成
 // ══════════════════════════════════════════════════════════
 
 /** 梦想点的系数。v4 把它从 0.02 提到 0.08。 */
@@ -96,18 +96,24 @@ export function kindProduct(state, kind) {
   return m;
 }
 
-/** 全局倍率里由可重复升级贡献的加法项：1 + Σ(k·等级) */
-export function globalAddTerm(state) {
+/** 计数频率里由可重复升级贡献的加法项：1 + Σ(k·等级) */
+export function countFreqAddTerm(state) {
   let extra = D(1);
   for (const cfg of Object.values(REPEATABLE)) {
-    if (cfg.kind !== "globalAdd") continue;
+    if (cfg.kind !== "countFreqAdd") continue;
     extra = extra.add(levelOf(state, cfg.id).mul(cfg.effectPerLevel ?? 0.05));
   }
   return extra;
 }
 
 /**
- * 全局产出倍率 = 梦想点项 × 全局倍率升级项 × 暗能量项
+ * **全局加成** = 梦想点项 × 计数频率项 × 暗能量项
+ *
+ * 它同时喂 `entropyRate` 与 `matterRate`（等于乘在环的两端），所以是**真·全局**：
+ * 顶部有一个专门的「全局加成」槽显示这个乘积和它的三个因子（见 ui.js）。
+ *
+ * ⚠️ 命名歧义（踩过的坑）：`REPEATABLE.particleBoost` 那条升级叫「计数频率」，
+ *    它只是这个乘积里的**一个因子**。别把两者混为一谈。
  *
  * ★ 原稿的 bug：算了 `dreamCoefficient` 但下面硬编码 0.02，导致 v4 完全无效。
  *   这里真的用它。
@@ -116,7 +122,7 @@ export function globalMultiplier(state) {
   const dp = state.dreamPoints;
   const base = D(1).add(dp.mul(dreamCoefficient(state)));
   return base
-    .mul(globalAddTerm(state))
+    .mul(countFreqAddTerm(state))
     .mul(darkEnergyMultiplier(state))
   // ⚠️ 量子**不在这里**。
   //
@@ -129,6 +135,19 @@ export function globalMultiplier(state) {
   //   而用户的原则是：**量子给的乘区不应该让物质一次跳到无限**。
   //
   //   现在量子作用在 entropyRate（单条产线），环增益只拿 Q。
+}
+
+/**
+ * 全局加成的**三个因子**（顶部「全局加成」槽显示分解用）。
+ *
+ * 接口放在这里而不是 ui.js：显示必须来自同一个公式（SPEC「输出函数 == 运算函数」），
+ * 否则又会出现「显示 ≠ 实际」。
+ */
+export function globalMultiplierParts(state) {
+  const dream = D(1).add(state.dreamPoints.mul(dreamCoefficient(state)));
+  const countFreq = countFreqAddTerm(state);
+  const de = darkEnergyMultiplier(state);
+  return { dream, countFreq, de, total: dream.mul(countFreq).mul(de) };
 }
 
 // ══════════════════════════════════════════════════════════
@@ -184,6 +203,11 @@ export function zpeMultiplier(state) {
   //   数值从 DE_MILESTONES 读（单一数据源，不抄）。
   const dm1 = DE_MILESTONES.find((x) => x.id === "dm1");
   if (dm1 && hasDe(state, "dm1")) m = m.mul(dm1.effect.value);
+  // ★ ∞ 层 ②「零点耦合」：无限点数量加进 ZPE 倍率的**加法区**（a区）
+  //   ⚠️ 位置是加法：`m = m + 1×IP`，不是乘。它会被后面引擎那类"最终加成"再乘一遍。
+  if (state.ipToZpeBought) {
+    m = m.add(D(INFINITY_UPGRADES.ipToZpe.perIp).mul(state.infinityPoints ?? 0));
+  }
   return m;
 }
 
@@ -214,7 +238,7 @@ export function zpeBaseMultiplier(state) {
  *        暗能量 1e0  -> 1.00e-6/秒
  *        暗能量 1e4  -> 3.65e-9/秒
  *        暗能量 1e10 -> 9.31e-18/秒     ← 单调递减
- *    改成 0.5 次方后，惩罚是**次线性**的，而全局倍率是指数增长，
+ *    改成 0.5 次方后，惩罚是**次线性**的，而全局加成是指数增长，
  *    所以获取速度会重新转正。
  *
  * ② **加下限**（方案 B 附带）
@@ -315,10 +339,13 @@ export function darkEnergyGainPerConversion(state) {
  *
  * m4「ZPE 倍率影响熵阱实际生效数量」—— 放大**数量**。
  *
- * ⚠️ 量子**不在这里**了。新模型（第三版）把量子的两个效果分开：
- *   熵生产倍率 ×(1+量子数)          -> 只进 entropyRate
- *   ZPE 产出倍率 ×(1+log10(量子数)) -> 只进 zpeRate
- * 这样两条产线互不叠乘，比之前「一起作用在枢纽上」更可控。
+ * ⚠️ 量子**不在这里**，也**不在 zpeRate 里**（这里原先写「ZPE 产出倍率 ×(1+log10 量子数)
+ *    只进 zpeRate」，那是更早一版的模型，已经不存在了）。量子现在一共 4 条作用：
+ *      entropyRate            ×(1+q)          -> **c区**（最终倍率，作用在增量上）
+ *      darkEnergyMultiplier   +q²（加法池）    -> a区
+ *      darkEnergyGainPerConversion ×(1+log10 q) -> a区
+ *      matterRate / tick      M×R(q)×ln10      -> 等价写法的 **b区**（见 engine.js）
+ *    所以「ZPE / 暗能量涨不动、物质照样指数到 e308」是结构性的，不是显示问题。
  */
 export function effectiveTraps(state) {
   let t = state.resources.traps;
@@ -341,8 +368,8 @@ export function entropyRate(state) {
     .mul(BASE.trapBaseRate)
     .mul(zpeMultiplier(state))
     .mul(v2)
-    // ★ 量子：作用在**熵产出**这条单线上（不是全局倍率）。
-    //   理由见 globalMultiplier 的注释 —— 放全局倍率等于乘在环的两端，
+    // ★ 量子：作用在**熵产出**这条单线上（不是全局加成）。
+    //   理由见 globalMultiplier 的注释 —— 放全局加成等于乘在环的两端，
     //   环增益会变成 Q²，物质会一次跳到无限。
     .mul(quantumEntropyMultiplier(state.quantum));
   if (hasDe(state, "dm3")) r = r.mul(darkEnergyMultiplier(state));
@@ -372,16 +399,55 @@ export function matterRate(state) {
     .mul(v3);
 
   // ★ 量子 → 指数成长项：`dM/dt += R·ln10·M`
-  //   与 engine.js 的 tick 里那一段**逐字对应**（改一处必须改另一处）。
-  const gRate = quantumGrowthRate(state.quantum);
-  if (gRate.lte(0)) return base;
-  return base.add(state.resources.matter.mul(gRate).mul(Math.LN10));
+  //   与 engine.js 的 tick 里那一整段**逐字对应**（改一处必须改另一处）。
+  const gRate = quantumGrowthRate(state.quantum, infinityRateMult(state));
+  const total = gRate.lte(0) ? base : base.add(state.resources.matter.mul(gRate).mul(Math.LN10));
+  // ★ 过载（软上限）：与 tick 走**同一个函数** —— 否则 consistency.mjs 会立刻报「显示 ≠ 实际」
+  // ★ 爬升形状（路线 1）：同一个族里的另一个因子（改形，不改层）
+  return total.mul(overloadFactor(state)).mul(climbFactor(state));
+}
+
+/**
+ * 爬升形状因子（路线 1）：`2^(−(L − knee)/halvingOrders)`，L ≤ knee 时恒为 1。
+ *
+ * 为什么需要它：物质的末端增长是 `dM/dt = M·R(q)·ln10`，即 `d(log10 M)/dt = R(q)` ——
+ * **斜率恒定 = 直线**。玩家看到的是"每 25 阶一样慢"的节拍器。
+ * 这个因子让 R 随深度递减，整条线变成 `L = knee + D·log2(1 + ln2·R₀·t/D)`，即 **log 形**。
+ *
+ * ⚠️ 与 `overloadFactor` 的区别：过载**只在打破无限之后**生效（管"越过旧硬顶能推多深"），
+ *    爬升形状**任何阶段都生效**（管"这段爬升长什么样"）。
+ * ⚠️ 必须被 `matterRate` 和 `tick` 同时使用（SPEC「输出函数 == 运算函数」）。
+ */
+export function climbFactor(state) {
+  const L = state.resources.matter.gt(0) ? state.resources.matter.log10() : D(0);
+  if (L.lte(CLIMB.knee)) return D(1);
+  const over = L.sub(CLIMB.knee).toNumber();
+  if (!(over > 1e-9)) return D(1);              // 拐点死区，避免 log10/pow 往返误差
+  return D(Math.pow(2, -over / CLIMB.halvingOrders));
+}
+
+/**
+ * 过载因子：`2^(−(超出拐点的阶数) / halvingOrders)`。
+ * 未超出拐点、或还没打破无限（那时是硬顶 + 强制大坍缩）时恒为 1。
+ *
+ * ⚠️ **必须被 matterRate 和引擎的 tick 同时使用**（SPEC「输出函数 == 运算函数」）。
+ */
+export function overloadFactor(state) {
+  if (!state.brokenInfinity) return D(1);      // 未打破：硬顶，不走软上限
+  const t = overloadThreshold(state);
+  const L = state.resources.matter.gt(0) ? state.resources.matter.log10() : D(0);
+  if (L.lte(t)) return D(1);
+  const over = L.sub(t).toNumber();
+  // 拐点附近给一个死区：log10/pow 的往返误差会让「刚好在拐点」算出 0.99999999999999，
+  // 那样界面上会显示成「×1.000（超 0.0 阶）」这种噪声。
+  if (!(over > 1e-9)) return D(1);
+  return D(Math.pow(2, -over / OVERLOAD.halvingOrders));
 }
 
 /**
  * ZPE 产出速率。
  *
- * ★ 方案 1（用户选定）：**全局倍率进两次**。
+ * ★ 方案 1（用户选定）：**全局加成进两次**。
  *
  *   `zpeRate = 熵阱 × globalMult × globalMult × zpe基础 × prodMult × 惩罚`
  *                        └───────── globalMult² ─────────┘
@@ -392,7 +458,7 @@ export function matterRate(state) {
  *   -> 整局只能多捕 **4 对（8 量子）**，涨得太慢。
  *
  *   两条路对照测过：
- *     · 全局倍率再进一次（**乘法**）  -> ZPE 涨 **6.3 阶**，8 对 / 16 量子  ✅
+ *     · 全局加成再进一次（**乘法**）  -> ZPE 涨 **6.3 阶**，8 对 / 16 量子  ✅
  *     · 暗能量 ×(1+log10 DE)（**对数**）-> ZPE 只涨 3.6 阶，5 对 / 10 量子  ❌
  *   乘法赢 —— 对数形式的加成传不到 ZPE 上（DE 涨得快，但 log 吃掉大部分）。
  *
@@ -416,7 +482,7 @@ export function zpeRate(state) {
   if (state.zpeFixedMultiplier) prodMult = prodMult.mul(state.zpeFixedMultiplier);
   return effectiveTraps(state)
     .mul(globalMultiplier(state))
-    // ★ 方案 1：全局倍率再进一次（见上方说明）
+    // ★ 方案 1：全局加成再进一次（见上方说明）
     .mul(globalMultiplier(state))
     .mul(zpeBaseMultiplier(state))
     .mul(prodMult)
@@ -437,7 +503,7 @@ export function zpeRate(state) {
  */
 export function effectiveDarkEnergyGain(state) {
   let g = darkEnergyGainPerConversion(state);
-  // ★ 里程碑 dm4b：全局倍率作用于相变转换速率
+  // ★ 里程碑 dm4b：全局加成作用于相变转换速率
   if (hasDe(state, "dm4b")) g = g.mul(globalMultiplier(state));
   return g;
 }
@@ -445,7 +511,7 @@ export function effectiveDarkEnergyGain(state) {
 /**
  * 暗能量生成速率（每秒）。
  *
- * ★ 里程碑 dm4b（1e6 暗能量）：**全局倍率作用于相变转换速率**。
+ * ★ 里程碑 dm4b（1e6 暗能量）：**全局加成作用于相变转换速率**。
  *
  *   注意它和「熵凝聚转换速率」是两回事：
  *     · 熵凝聚（entropy→particle）在 particleRate 里，**不含 dm4b**
@@ -460,7 +526,12 @@ export function effectiveDarkEnergyGain(state) {
  */
 export function darkEnergyRate(state) {
   if (!state.phaseTransmuterUnlocked) return D(0);
-  return zpeRate(state).div(BASE.darkEnergyThreshold).mul(effectiveDarkEnergyGain(state));
+  const r = zpeRate(state).div(BASE.darkEnergyThreshold).mul(effectiveDarkEnergyGain(state));
+  // ★ ∞ 层 ③「相变超频」：无限点加速相变仪（ZPE → 暗能量）
+  if (state.ipToTransmuterBought) {
+    return r.mul(D(1).add(D(INFINITY_UPGRADES.ipToTransmuter.perIp).mul(state.infinityPoints ?? 0)));
+  }
+  return r;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -527,7 +598,7 @@ export function particleRate(state) {
   const { threshold, output } = conversion(state);
   // ⚠️ 这里原来有旧量子升级「直接边」的分支。那套系统已删除。
   //    （它当年会跑飞：d²M/dt² = k·c + k·j·M 里的 M 自反馈，
-  //      增长率 √(k·j) 随全局倍率一起涨，所以整条升级被废弃。）
+  //      增长率 √(k·j) 随全局加成一起涨，所以整条升级被废弃。）
   // ⚠️ dm4b **不在这里**。它作用于「相变转换速率」（ZPE→暗能量），
   //    不是「熵凝聚转换速率」（熵→粒子）。见 darkEnergyRate()。
   return entropyRate(state).div(threshold).mul(output);

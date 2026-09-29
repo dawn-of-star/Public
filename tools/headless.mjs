@@ -84,7 +84,7 @@ console.log();
   const ratio = after.div(before).toNumber();
   // 无 v4: 1 + 50×0.02 = 2；有 v4: 1 + 50×0.08 = 5  => 比值 2.5
   console.log(`  ① v4「虚空共鸣」`);
-  console.log(`     50 梦想点时，全局倍率 ${fmt(before)} -> ${fmt(after)}  (×${ratio.toFixed(3)})`);
+  console.log(`     50 梦想点时，全局加成 ${fmt(before)} -> ${fmt(after)}  (×${ratio.toFixed(3)})`);
   console.log(`     期望 ×2.500（2 -> 5）  ${Math.abs(ratio - 2.5) < 0.01 ? "✅ 生效" : "❌ 无效"}`);
 }
 console.log();
@@ -227,7 +227,7 @@ console.log(`  熵阱           ${fmt(s.traps)}  (实际生效 ${fmt(s.effective
 console.log(`  ZPE            ${fmt(s.zpe)}`);
 console.log(`  暗能量         ${fmt(s.darkEnergy)}`);
 console.log(`  梦想点         ${fmt(s.dreamPoints)}`);
-console.log(`  全局倍率       ${fmt(s.globalMultiplier)}`);
+console.log(`  全局加成       ${fmt(s.globalMultiplier)}`);
 console.log(`  ZPE 倍率       ${fmt(s.zpeMultiplier)}`);
 console.log();
 console.log(`  熵/秒          ${fmt(s.entropyRate)}`);

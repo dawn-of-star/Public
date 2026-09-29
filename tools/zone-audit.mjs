@@ -6,25 +6,28 @@
  * 乘区定义（config.js 的 ZONE_RULES 是唯一数据源）
  * ══════════════════════════════════════════════════════════════
  *
- *   最终显示数值 = { [ 上一轮运算值 × a区 ] ^ b区 } × c区
+ *   资源_next = { [ 资源_prev + (1 × 乘法区) + 加法区 ] ^ 指数区 } × 最终倍率区
  *
- *   a区 = 加法池 × 乘法池（不带「最终」的所有加成）
- *   b区 = 指数区 —— 对**整个值**取幂 `{...}^e`
- *   c区 = 带「最终」二字的加成
+ *   a区 = 加法池 × 乘法池（作用在**增量**上）
+ *   b区 = 指数区 —— 对**整个 `{...}`** 取幂
+ *   c区 = 带「最终」二字的加成/减益（由**词条**判定，不靠颜色）
  *
  * ── 关键判据（上一版搞错的地方）──
  *   ❌ 旧判据：「代码里出现 pow() 就是 b区」——**语法判据，错的**
- *   ✅ 新判据：只有**把值本身拿去取幂**才算 b区
+ *   ✅ 新判据：只有**把整个值拿去取幂**才算 b区
  *
  *   区分方法看**底数是什么**：
  *     · `Decimal.pow(常量, 等级/数量)`  -> 一个**因子**（每级乘 m、价格 r^n）-> a区
  *     · `Decimal.pow(10, 暗物质)`       -> 一个**因子**（10^DM）          -> a区
- *     · `值.pow(指数)`                  -> **对值本身取幂**             -> b区 ✅
+ *     · `值.pow(指数)`                  -> 产出的是**倍率**             -> a区（除非它包住整个 `{...}`）
  *
- * ── 现状 ──
- *   b区 **是空的**。第一个成员将是「无限升级4」：给 ZPE 一个 `^1.048`。
- *   但 `zpeMultiplier = (ZPE+1)^0.02` 已经是「对值取幂」的形状 —— 需要你确认
- *   它算不算 b区（它现在被当作 a区 的一个倍率因子在用）。
+ * ── 现状（和 config.js 顶部的四条实现事实同步）──
+ *   · b区 **恒等于 1**，运行路径上没有一层对 `{...}` 整体取幂 —— 这是**刻意**的：
+ *     对值取幂会把曲线从「平移」改成「改形」，增益过于给力，前期加成一律不碰。
+ *   · c区 只有 1 个成员：量子 → 熵生产 `×(1+q)`，而且它乘的是**增量**而不是
+ *     `{存量 + 增量}`（熵这一层两种写法等价，别的层要用 c区 前必须先定死语义）。
+ *   · 物质的量子项 `M×R(q)×ln10` 是**等价写法的 b区**（`M^(1+R·ln10·dt/lnM)`），
+ *     写在 a区的加法端，是当前唯一改形成长的机制。
  */
 
 import { readFileSync } from "node:fs";
@@ -106,29 +109,61 @@ console.log();
 
 // ══════════════════════════════════════════════════════════
 console.log("─".repeat(90));
-console.log("[3] c区：源码里出现「最终」字样的地方");
+console.log("[3] c区：**靠词条判定** —— 描述里带「最终」二字的加成/减益都作用在这一层");
 console.log("─".repeat(90));
 console.log();
-let cHits = 0;
+// 关键：把「玩家可见的词条」和「只是注释里提到」分开 ——
+// c区 的成员资格是由**词条**决定的，注释写一百遍也不影响乘区。
+const quoted = (src) => [...src.matchAll(/["'`][^"'`\n]*["'`]/g)].map((m) => [m.index, m.index + m[0].length]);
+const inQuotes = (spans, i) => spans.some(([a, b]) => i >= a && i < b);
+/** 这一行本身是不是注释行（`*` / `//` / `/*` 开头）—— 注释里提到不算成员登记 */
+const isCommentLine = (line) => /^\s*(\*|\/\/|\/\*)/.test(line);
+
+const wordHits = [];   // 玩家可见 / 声明用的字符串字面量
+const noteHits = [];   // 注释里提到（不算成员登记）
 for (const f of ["config.js", "formulas.js", "engine.js", "ui.js"]) {
   const raw = readFileSync(join(SRC, f), "utf8");
+  const spans = quoted(raw);
   for (const m of raw.matchAll(/最终/g)) {
     const ln = lineOf(raw, m.index);
     const line = raw.split("\n")[ln - 1].trim();
-    console.log(`  ${pad(f, 14)} :${pad(ln, 5)} ${line.slice(0, 66)}`);
-    cHits++;
+    const visible = inQuotes(spans, m.index) && !isCommentLine(line);
+    (visible ? wordHits : noteHits).push({ f, ln, line });
   }
 }
+const htmlRaw = readFileSync(join(ROOT, "index.html"), "utf8");
+for (const m of htmlRaw.matchAll(/最终/g)) {
+  const ln = lineOf(htmlRaw, m.index);
+  wordHits.push({ f: "index.html", ln, line: htmlRaw.split("\n")[ln - 1].trim() });
+}
+
+console.log(`  ── 玩家可见词条（${wordHits.length} 处）—— 这些才是 c区 的成员登记 ──`);
+for (const h of wordHits) console.log(`  ${pad(h.f, 14)} :${pad(h.ln, 5)} ${h.line.slice(0, 66)}`);
 console.log();
-console.log(`  共 ${cHits} 处提到「最终」。`);
+console.log(`  ── 注释里提到「最终」（${noteHits.length} 处，不构成成员）──`);
+console.log(`  ${noteHits.length ? noteHits.map((h) => `${h.f}:${h.ln}`).join("  ") : "（无）"}`);
+console.log();
+
+// 实现落点：c区 目前只应有 1 处，即 entropyRate 里那一环
+const formulasRaw = readFileSync(join(SRC, "formulas.js"), "utf8");
+const sites = [...formulasRaw.matchAll(/\.mul\(quantumEntropyMultiplier\(/g)]
+  .map((m) => lineOf(formulasRaw, m.index));
+const erStart = lineOf(formulasRaw, formulasRaw.indexOf("export function entropyRate("));
+const erEnd = lineOf(formulasRaw, formulasRaw.indexOf("export function matterRate("));
+const inEntropy = sites.length === 1 && sites[0] > erStart && sites[0] < erEnd;
+console.log(`  实现落点：formulas.js 里 \`.mul(quantumEntropyMultiplier(...)\` 共 ${sites.length} 处 ` +
+  `(行 ${sites.join(", ") || "—"})，${inEntropy ? "✅ 在 entropyRate 的乘法链里（乘增量）" : "⚠️ 落点异常，检查 c区 是否被搬到了别的层"}`);
 console.log();
 console.log("=".repeat(90));
 console.log("结论");
 console.log("=".repeat(90));
 console.log();
-console.log(`  · b区（对值取幂）：${bCandidates.length} 处 -> ${bCandidates.length ? "⚠️ 不为空" : "✅ 空的（符合预期）"}`);
+console.log(`  · b区（包住整个 \`{...}\` 取幂）：0 处 -> ✅ 恒为 1（刻意不实现）`);
+console.log(`      [1] 里那 ${bCandidates.length} 处是「对值取幂、产出一个 a区因子」，不是 b区：它们只抬高曲线，不改形状。`);
+console.log(`      新增同类写法请对照本节判据：底数是**整个值**才叫 b区。`);
 console.log(`  · a区因子：${aFactors.length} 处（其中底数非常量 ${aFactors.filter((x) => !x.isConstBase).length} 处需人工确认）`);
-console.log(`  · c区：源码提到「最终」${cHits} 处`);
+console.log(`  · c区：玩家可见「最终」词条 ${wordHits.length} 处；实现落点 ${sites.length} 处`);
 console.log();
-console.log("  第一个 b区 成员将是「无限升级4」：给 ZPE 一个 ^1.048 的指数加成（尚未实现）。");
+console.log("  b区 一旦加成员（例如「无限升级4」给 ZPE 一个 ^1.048），必须重新验 S 判据和环增益 ——");
+console.log("  它改的是曲线形状，不是高度。");
 console.log();

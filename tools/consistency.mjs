@@ -24,8 +24,8 @@ import Decimal from "../dist/break_eternity.esm.js";
 import { BASE, COLLAPSE, DE_MILESTONES, DE_UPGRADES, REPEATABLE, VOID_UPGRADES } from "../src/config.js";
 import { newState } from "../src/state.js";
 import {
-  conversion, darkEnergyRate, deUpgradeCost, entropyRate, matterRate, particleRate,
-  repeatableCost, trapCost, zpeRate,
+  conversion, darkEnergyRate, deUpgradeCost, entropyRate, globalMultiplier, globalMultiplierParts,
+  matterRate, particleRate, repeatableCost, trapCost, zpeRate,
 } from "../src/formulas.js";
 import { breakInfinity, buyDeUpgrade, buyDreamUpgrade, buyRepeatable, buyTrap, buyVoidUpgrade, doBigCrunch, doClick, tick } from "../src/engine.js";
 
@@ -394,6 +394,23 @@ console.log();
     const r = doBigCrunch(s);
     const ok = !!r && !s.deAccum.gt(0) && !s.zpeAccumulator.gt(0);
     return { ok, detail: `deAccum ${before} -> ${s.deAccum.toString()}（坍缩返回 ${r ? "ok" : "null"}）` };
+  });
+
+  // ③ 顶部「全局加成」槽：显示的总值必须等于三个因子的乘积
+  //    槽把「全局加成」拆成 梦想点 × 计数频率 × 暗能量 展示；拆错或算错就是"显示 ≠ 实际"
+  check("全局加成槽 = 三因子乘积", () => {
+    const s = freeze(runToDePhase());
+    s.dreamPoints = D(37);
+    const parts = globalMultiplierParts(s);
+    const total = globalMultiplier(s);
+    const product = parts.dream.mul(parts.countFreq).mul(parts.de);
+    const ok = rel(parts.total.toString(), total.toString()) < 1e-12 &&
+      rel(product.toString(), total.toString()) < 1e-12;
+    return {
+      ok,
+      detail: `梦想点 ×${parts.dream.toFixed(3)} · 计数频率 ×${parts.countFreq.toFixed(3)}` +
+        ` · 暗能量 ×${parts.de.toFixed(3)} = ×${product.toFixed(3)}（总值 ×${total.toFixed(3)}）`,
+    };
   });
 
   const bad = results.filter((x) => !x).length;

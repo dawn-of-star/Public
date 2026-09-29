@@ -90,11 +90,34 @@ body {
 .topbar h1 small { color: var(--text-faint); font-size: 11px; font-weight: 400; margin-left: 8px; }
 .topbar .spacer { flex: 1; }
 
+/*
+  两列：左 = 主控台（点击/升级/熵阱），右 = 各层标签页。
+  ⚠️ 原来是 `1.25fr 1fr`（左列宽 25%），用户量出来左 600px / 右 546px，反馈"左侧多约 10%"。
+     现在右页略宽（1fr : 1.15fr）—— 右页要放 2×n 的无限升级网格、梦想卡、里程碑，横向更吃紧。
+*/
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
   gap: var(--gap);
   align-items: start;
+}
+/*
+  左列**常驻**：右页切到量子/无限后要往下滚很久，合并成单列会把
+  「点击生成熵」「买熵阱」这些高频操作滚出视野，所以让左列自己粘住。
+  max-height + overflow 兜底：左列万一比视口还高，它自己滚，不会出现够不到的内容。
+  （窄屏单列时关掉，见下面的 900px 断点。）
+*/
+@media (min-width: 901px) {
+  .layout > .col:first-child {
+    position: sticky;
+    top: var(--gap);
+    max-height: calc(100vh - var(--gap) * 2);
+    overflow-y: auto;
+  }
+  /* 左列自带滚动条时，别用系统亮色（AMOLED 黑底上很刺眼）—— 和日志面板同一套 */
+  .layout > .col:first-child::-webkit-scrollbar { width: 7px; }
+  .layout > .col:first-child::-webkit-scrollbar-track { background: transparent; }
+  .layout > .col:first-child::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
 }
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
@@ -184,6 +207,14 @@ button { font: inherit; cursor: pointer; }
 .btn-cost { font-size: 12px; margin-top: 4px; color: var(--text-dim); }
 
 .stack { display: flex; flex-direction: column; gap: 8px; }
+
+/*
+   ∞ 层的无限升级已经到 12 条，单列会把无限页拉得很长 —— 用 2×n 网格。
+   （窄屏退回单列，和 .layout 的断点保持一致。）
+*/
+.inf-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.inf-grid .btn { height: 100%; }
+@media (max-width: 900px) { .inf-grid { grid-template-columns: 1fr; } }
 
 /* ══════════════ 主点击按钮 ══════════════ */
 
@@ -311,8 +342,18 @@ button { font: inherit; cursor: pointer; }
 .zone-matter   { --zone: #ff9800; }
 .zone-zpe      { --zone: #2fa6f7; }
 .zone-de       { --zone: #b388ff; }
-.zone-global   { --zone: #ffd600; }
+.zone-countfreq { --zone: #26a69a; }  /* 计数频率项（那条 1+0.05×等级 的升级） */
+.zone-global   { --zone: #ffd600; }   /* 真·全局加成（全局加成那个乘积） */
+.zone-cost     { --zone: #90a4ae; }   /* 价格修正（不产生产出） */
 .zone-dm       { --zone: #ff3b30; }   /* 第四层：暗物质，红色主色调 */
+.zone-ip       { --zone: #ff4d94; }   /* ∞ 层：无限点收益 */
+
+/*
+  用乘区色写普通文字。
+  用途：顶部「全局加成」槽的因子分解（`梦想点 ×1.4 · 计数频率 ×10.2 · 暗能量 ×8.7`），
+  每个因子按自己的乘区上色 —— 一眼分清「计数频率（那个升级）」与「全局（乘积）」。
+*/
+.zf { color: var(--zone, var(--text-dim)); }
 
 /* 买得起时：边框用乘区色而不是统一的蓝 */
 .btn.zone.affordable {
@@ -336,6 +377,8 @@ button { font: inherit; cursor: pointer; }
   color: var(--zone, var(--text-dim));
   white-space: nowrap;
 }
+/* 虹色卡（梦想系统）没有单一 --zone，标签取虹色里最深的一段，别让它退回灰色 */
+.rainbow-card .zone-tag { border-color: #7c4dff; color: #b388ff; }
 
 /* 图例 */
 .legend {
@@ -590,8 +633,24 @@ button { font: inherit; cursor: pointer; }
 }
 /* 卡片：走边框 + 底色，不做文字裁剪（否则子元素全变透明） */
 .q-card.rainbow-card {
+  position: relative;
   border-left: 3px solid transparent;
-  border-image: linear-gradient(180deg,
-    #ff5f6d, #ffc371, #7ee787, #4dd0e1, #7c4dff) 1;
   background: linear-gradient(90deg, rgba(124,77,255,.07), transparent 65%);
+}
+/*
+  左侧色条**必须自己做动画**：原来用 `border-image` 铺静态渐变，
+   颜色是不动的（用户反馈"第一个颜色为什么不动"）。
+   改成伪元素 + 纵向流动的渐变，和 `.rainbow` 文字同一套色。
+*/
+@keyframes dreamHueY {
+  0%   { background-position: 50%   0%; }
+  100% { background-position: 50% 300%; }
+}
+.q-card.rainbow-card::before {
+  content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px;
+  border-radius: 3px 0 0 3px;
+  background: linear-gradient(180deg,
+    #ff5f6d, #ffc371, #7ee787, #4dd0e1, #7c4dff, #ff5f6d);
+  background-size: 100% 300%;
+  animation: dreamHueY 6s linear infinite;
 }

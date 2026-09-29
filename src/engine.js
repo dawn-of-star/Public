@@ -20,15 +20,16 @@
 
 import Decimal from "../dist/break_eternity.esm.js";
 import {
-  BASE, BREAK_INFINITY, CRUNCH_AT_LABEL, DE_UPGRADES, DREAM_BY_ID, QUANTUM, REPEATABLE,
-  VOID_UPGRADES, crunchThreshold, piecewiseDeCost, dreamUpgradeEffects, infinityPointGain, quantumGrowthRate,
-  quantumZpeRequirement,
+  BASE, BREAK_INFINITY, CRUNCH_AT_LABEL, DE_UPGRADES, DREAM_BY_ID, INFINITY_UPGRADES, QUANTUM, REPEATABLE,
+  VOID_UPGRADES, crunchThreshold, piecewiseDeCost, dreamUpgradeEffects, infinityPointGain,
+  infinityRateMult, infinityStartLog10, infinityUpgradeCost, infinityUpgradeOwned,
+  quantumGrowthRate, quantumZpeRequirement, timeInfinityPointGain,
 } from "./config.js";
 import {
   D, canBigCrunch, checkDeMilestones, checkZpeMilestones, collapseUnlocked,
   clampToAffordable, conversion, darkEnergyGainPerConversion, darkEnergyRate, deUpgradeCost, effectiveTraps,
   entropyRate, floorDiv, geometricSum, globalMultiplier, isAutoAcquire,
-  kindProduct, matterRate, particleRate, repeatableCost, trapCost, voidUpgradeCost,
+  kindProduct, matterRate, climbFactor, overloadFactor, particleRate, repeatableCost, trapCost, voidUpgradeCost,
   zpeMultiplier, zpeRate,
 } from "./formulas.js";
 import { addLevel, awardDream, deLevelOf, levelOf, pushLog } from "./state.js";
@@ -68,6 +69,11 @@ export function matterCoeff(state) {
  */
 export function tick(state, dt) {
   if (!(dt > 0) || !Number.isFinite(dt)) return state;
+
+  // ★ ∞ 层 ④「无限长河」的计量口径：本次无限已经过去了多少秒。
+  //   用 dt 累加而不是读 wall clock —— 离线结算（advance）走的是同一个 tick，
+  //   所以挂机 4 小时回来，这段时间也会被如实计入。
+  state.infinityElapsed = (state.infinityElapsed ?? 0) + dt;
 
   const P0 = state.resources.particle;
 
@@ -115,13 +121,21 @@ export function tick(state, dt) {
   //   R 由量子数决定，上限 0.05 阶/秒 -> 283 阶约 1.6 小时。
   //
   //   ⚠️ 它**必须**带 R 的钳制。当年「直接边」（P ∝ M）跑飞就是因为
-  //      速率 `√(k·j) ∝ 全局倍率` 无上限，几十个数量级一瞬间就过去了。
-  const gRate = quantumGrowthRate(state.quantum);
+  //      速率 `√(k·j) ∝ 全局加成` 无上限，几十个数量级一瞬间就过去了。
+  const gRate = quantumGrowthRate(state.quantum, infinityRateMult(state));
   if (gRate.gt(0)) {
     matterGain = matterGain.add(
       state.resources.matter.mul(gRate).mul(Math.LN10).mul(dt),
     );
   }
+
+  // ★ 过载（软上限）：打破无限之后不再有硬顶，超拐点后按 `2^(−超出 / halvingOrders)` 减速。
+  //   与 formulas.js 的 matterRate 用**同一个函数**（display == 实际）。
+  const ov = overloadFactor(state);
+  if (ov.lt(1)) matterGain = matterGain.mul(ov);
+  // ★ 爬升形状（路线 1）：让 e25→e308.25 从直线变 log 形。同样与 matterRate 同源。
+  const cf = climbFactor(state);
+  if (cf.lt(1)) matterGain = matterGain.mul(cf);
 
   state.resources.matter = state.resources.matter.add(matterGain);
 
@@ -609,7 +623,10 @@ function autoAcquireDream(state) {
  *   所以 ZPE/暗能量现在**总是**被清空。）
  */
 function resetForCollapse(state) {
-  state.resources.matter = D(0);
+  // ★ ∞ 层「起点跃迁」：把物质起点从 0 抬到 1e{startLog10}（没买就是 0，行为不变）。
+  //   只抬**起点**，不碰上限 —— 所以它缩短的是距离，不是改形。
+  const startLog = infinityStartLog10(state);
+  state.resources.matter = startLog > 0 ? Decimal.pow(10, startLog) : D(0);
   state.resources.particle = D(0);
   state.resources.entropy = D(0);
   state.resources.traps = D(0);
@@ -628,7 +645,7 @@ function resetForCollapse(state) {
 
 // ★ `doCollapse`（临界坍缩）已整个移除 —— 用户决定：暗物质不应存在。
 //
-//   它原本是「物质跨过阈值(×1e5 递进) -> 领暗物质 -> 全局倍率 ×10^DM」的阶梯。
+//   它原本是「物质跨过阈值(×1e5 递进) -> 领暗物质 -> 全局加成 ×10^DM」的阶梯。
 //   被删的理由是**形式性**的，不是调参问题：
 //     基础成长 `M'' ∝ log(M)`，乘任何倍率 C 只能得到
 //     `log10(M) ∝ 2·log10(t) + 常数(C)` —— 只平移常数项。
@@ -649,11 +666,21 @@ function resetForCollapse(state) {
 export function doBigCrunch(state) {
   if (!canBigCrunch(state)) return null;
 
-  const ip = infinityPointGain(state.resources.matter, state.brokenInfinity);
+  // ★ ∞ 层：大坍缩的收益由两部分组成
+  //     ① 深度收益 = infinityPointGain(...) × 2^①等级
+  //     ④ 耗时收益 = (本次无限秒数 ÷ 60) × 2^①等级   ← 与深度无关的固定收入
+  //   两笔都吃 ① 的加成（用户明确要求）。
+  const ipMult = Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0);
+  const depthIP = infinityPointGain(state.resources.matter, state.brokenInfinity).mul(ipMult);
+  const elapsed = state.infinityElapsed ?? 0;
+  const timeIP = timeInfinityPointGain(state, elapsed);
+  const ip = depthIP.add(timeIP);
 
   state.infinityPoints = state.infinityPoints.add(ip);
   state.bigCrunchCount = state.bigCrunchCount.add(1);
   resetForCollapse(state);
+  // ④ 的计时器归零：下一次无限从 0 开始重新累计
+  state.infinityElapsed = 0;
 
   // ★ 量子**会被大坍缩重置**。
   //   `quantumPairs`（门槛进度）也必须一起清 —— 否则门槛会退回 1e10，
@@ -665,6 +692,9 @@ export function doBigCrunch(state) {
   // ★ 阈值文案从 config 取（CRUNCH_AT_LABEL），不要手写 "1e308.25" ——
   //   手写的那个和实际用的 log10(Number.MAX_VALUE) = 1e308.2547 差 0.25 个数量级。
   pushLog(state, `🌌 大坍缩！物质触及 ${CRUNCH_AT_LABEL} 上限，获得 ${ip.toString()} 无限点（共 ${state.infinityPoints.toString()}）`);
+  if (timeIP.gt(0)) {
+    pushLog(state, `🌊 无限长河：本次无限耗时 ${fmtSeconds(elapsed)} → 额外 ${timeIP.toString()} 点（深度部分 ${depthIP.toString()}）`);
+  }
   // ⚠️ 这里曾经有一行 `pushLog(... 量子 +${q.toString()} ...)`，以及
   //    `return { infinityPoints: ip, quantum: q }` —— 但 v3 量子模型
   //    已经删掉了「大坍缩给量子」，`q` 这个变量不复存在。
@@ -676,7 +706,15 @@ export function doBigCrunch(state) {
   //    教训：**删一个功能时，要连带删掉它对外的返回值、日志、接口。**
   pushLog(state, `💭 梦想点保留（${state.dreamPoints.toString()} 点）`);
   awardDream(state, "bigcrunch", "首次大坍缩");
-  return { infinityPoints: ip };
+  return { infinityPoints: ip, depthIP, timeIP };
+}
+
+/** 耗时的短显示（日志用，纯展示，不参与运算） */
+function fmtSeconds(sec) {
+  const s = Math.max(0, Math.floor(sec));
+  if (s < 60) return `${s} 秒`;
+  if (s < 3600) return `${Math.floor(s / 60)} 分 ${s % 60} 秒`;
+  return `${Math.floor(s / 3600)} 小时 ${Math.floor((s % 3600) / 60)} 分`;
 }
 
 /**
@@ -698,6 +736,88 @@ export function buyDreamUpgrade(state, id) {
   return true;
 }
 
+
+// ══════════════════════════════════════════════════════════
+// ★ ∞ 层：无限升级（用无限点购买，不随大坍缩重置）
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 购买无限升级（统一入口）。
+ *
+ * ⚠️ 价格一律走 `infinityUpgradeCost()`（config 里的唯一数据源），
+ *    界面显示的也是它 —— 这样"显示 vs 实际"不可能脱节。
+ *
+ * @returns {{ok: boolean, cost: Decimal, level: Decimal}} 供 UI/自检读取
+ */
+export function buyInfinityUpgrade(state, id) {
+  const cfg = INFINITY_UPGRADES[id];
+  if (!cfg) return { ok: false, cost: D(0), level: state.ipDoubleLevel ?? D(0) };
+  if (!cfg.repeatable && infinityUpgradeOwned(state, id)) {
+    return { ok: false, cost: D(0), level: state.ipDoubleLevel ?? D(0) };
+  }
+  const cost = infinityUpgradeCost(state, id);
+  if (state.infinityPoints.lt(cost)) {
+    return { ok: false, cost, level: state.ipDoubleLevel ?? D(0) };
+  }
+  state.infinityPoints = state.infinityPoints.sub(cost);
+
+  if (id === "ipDouble") {
+    state.ipDoubleLevel = (state.ipDoubleLevel ?? D(0)).add(1);
+    pushLog(state, `∞ 无限增幅 → ${state.ipDoubleLevel.toString()} 级（无限点收益 ×${Decimal.pow(cfg.effectMult, state.ipDoubleLevel).toString()}）`);
+  } else if (id === "ipToZpe") {
+    state.ipToZpeBought = true;
+    pushLog(state, `∞ 购买「${cfg.name}」：ZPE 倍率开始吃无限点数量`);
+  } else if (id === "ipToTransmuter") {
+    state.ipToTransmuterBought = true;
+    pushLog(state, `∞ 购买「${cfg.name}」：相变仪开始吃无限点数量`);
+  } else if (id === "ipTime") {
+    state.ipTimeBought = true;
+    pushLog(state, `∞ 购买「${cfg.name}」：每次无限额外按耗时给点（每 ${cfg.secondsPerPoint} 秒 1 点）`);
+  } else if (cfg.startLog10 != null) {
+    // 起点跃迁：每档都是"开局物质 = 该档深度"，取最高的一档生效
+    state.startBought = { ...(state.startBought ?? {}), [id]: true };
+    pushLog(state, `∞ 购买「${cfg.name}」：每次大坍缩后以 1e${cfg.startLog10} 物质开局`);
+  } else if (cfg.rateMult != null) {
+    state.speedBought = { ...(state.speedBought ?? {}), [id]: true };
+    pushLog(state, `∞ 购买「${cfg.name}」：量子成长速率上限 ×${cfg.rateMult}（当前 ×${infinityRateMult(state).toFixed(3)}）`);
+  }
+  return { ok: true, cost, level: state.ipDoubleLevel ?? D(0) };
+}
+
+/** 无限升级当前的「效果」文本数值（UI 与自检共用，保证从公式推导） */
+export function infinityUpgradeEffect(state, id) {
+  const ip = state.infinityPoints ?? D(0);
+  const cfg = INFINITY_UPGRADES[id];
+  if (id === "ipDouble") {
+    return { mult: Decimal.pow(cfg.effectMult, state.ipDoubleLevel ?? 0) };
+  }
+  if (id === "ipToZpe") {
+    return { bonus: D(INFINITY_UPGRADES.ipToZpe.perIp).mul(state.ipToZpeBought ? ip : 0) };
+  }
+  if (id === "ipToTransmuter") {
+    return { mult: D(1).add(D(INFINITY_UPGRADES.ipToTransmuter.perIp).mul(state.ipToTransmuterBought ? ip : 0)) };
+  }
+  if (id === "ipTime") {
+    // 当前这次无限"已经攒了多少"，以及买下后每小时的基础收入
+    const cap = INFINITY_UPGRADES.ipTime.capSeconds;
+    const counted = cap == null ? (state.infinityElapsed ?? 0) : Math.min(state.infinityElapsed ?? 0, cap);
+    const perHour = new Decimal(cap == null ? 3600 : Math.min(3600, cap))
+      .div(INFINITY_UPGRADES.ipTime.secondsPerPoint)
+      .mul(Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0));
+    const accrued = state.ipTimeBought
+      ? D(counted).div(INFINITY_UPGRADES.ipTime.secondsPerPoint)
+        .mul(Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0))
+      : D(0);
+    return { perHour, accrued };
+  }
+  if (cfg?.startLog10 != null) {
+    return { startLog10: cfg.startLog10, activeLog10: infinityStartLog10(state) };
+  }
+  if (cfg?.rateMult != null) {
+    return { totalMult: infinityRateMult(state) };
+  }
+  return {};
+}
 
 // ══════════════════════════════════════════════════════════
 // 派生显示值（UI 用，也可用于无头测试）

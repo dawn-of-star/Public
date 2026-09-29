@@ -32,7 +32,7 @@ function createWindow() {
     height: 880,
     minWidth: 880,
     minHeight: 600,
-    title: "宇宙起源 demo",
+    title: "空想增量 demo",
     backgroundColor: "#000000", // AMOLED，避免启动时白闪
     autoHideMenuBar: true,
     show: false,                // 等首帧画好再显示，避免白屏
@@ -109,8 +109,12 @@ function buildMenu() {
 
 // 存档目录用 ASCII 名，避免中文路径在不同系统语言下出乱子。
 // localStorage 落在 %APPDATA%\CosmosOrigin 下，跨版本升级不会丢档。
+//
+// ⚠️ 游戏显示名已改为「空想增量」，但**这个目录名刻意不改**：
+//    改掉它 = 所有老存档立刻找不到（等价于强制重开）。
+//    要改就得配一次性迁移（把旧目录搬过去），那需要在本机跑一次 electron 验证。
 app.setName("CosmosOrigin");
-app.setAppUserModelId("com.cosmosorigin.game");
+app.setAppUserModelId("com.kongxiang.incremental");
 
 // 只允许开一个实例，第二次启动就聚焦已有窗口
 const gotLock = app.requestSingleInstanceLock();

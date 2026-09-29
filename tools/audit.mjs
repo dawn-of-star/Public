@@ -23,7 +23,7 @@ import {
 } from "../src/config.js";
 import {
   conversion, darkEnergyGainPerConversion, darkEnergyMultiplier, effectiveTraps,
-  entropyRate, globalAddTerm, globalMultiplier, matterRate, particleRate,
+  entropyRate, countFreqAddTerm, globalMultiplier, matterRate, particleRate,
   repeatableCost, trapCost, zpeMultiplier, zpeRate,
 } from "../src/formulas.js";
 import { affordableCount, buyRepeatable, buyTrap } from "../src/engine.js";
@@ -116,14 +116,14 @@ sec("A. 购买闭式解  vs  暴力累加");
 sec("B. 描述声称值  vs  实际公式");
 // ══════════════════════════════════════════════════════════
 
-// B1. particleBoost 声称「所有产出 ×globalAddTerm」
+// B1. particleBoost 声称「所有产出 ×countFreqAddTerm」
 {
   const st = newState();
   st.levels.particleBoost = D(100);
-  // 实现在 globalMultiplier 里乘 globalAddTerm；独立复算 1 + 0.05×100
+  // 实现在 globalMultiplier 里乘 countFreqAddTerm；独立复算 1 + 0.05×100
   const manual = 1 + 0.05 * 100;
-  ok("B1 particleBoost 实际 = 1+0.05×等级", near(globalAddTerm(st).toString(), manual),
-    `${globalAddTerm(st).toString()} vs ${manual}（旧描述曾写 ×1.1^等级 = ×13780）`);
+  ok("B1 particleBoost 实际 = 1+0.05×等级", near(countFreqAddTerm(st).toString(), manual),
+    `${countFreqAddTerm(st).toString()} vs ${manual}（旧描述曾写 ×1.1^等级 = ×13780）`);
 }
 
 // B2. matterBoost 声称「物质产出 ×effect^等级」—— effect 必须**从 config 读**，
@@ -206,7 +206,7 @@ sec("C. 核心产出链（逐项拆解）");
     `${particleRate(st).toExponential(4)}`);
 }
 
-// C4. matterRate = 粒子 × 0.1 × 物质乘区 × 全局倍率
+// C4. matterRate = 粒子 × 0.1 × 物质乘区 × 全局加成
 {
   const st = newState();
   st.resources.particle = D("1e10");

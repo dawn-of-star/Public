@@ -1,8 +1,25 @@
-# 宇宙起源（Cosmos Origin）
+# 空想增量（Kongxiang Incremental）
 
 网页增量游戏。原生 ES 模块 + `break_eternity.js`，**零构建、零 npm install**。
 
-当前版本：**0.4.5**
+当前版本：**0.5.1**
+
+> **改完东西只想确认没搞坏？** 跑 `npm test`（或 `node tools/run-all.mjs`）——
+> 一次跑完 22 个自检脚本，只把失败细节打出来。约 4 分钟。
+> 不知道该改哪个文件？看下面[「想改一个数值」](#想改一个数值)那张表。
+
+### 维护约定（改机制时必须同步的三处）
+
+这个项目已经不靠「记得住」运转，而靠三样东西兜着。任何一次机制改动，这三处必须一起动：
+
+1. **代码注释写清「为什么」** —— 踩过的坑、被否掉的方案、反例，都留在注释里（它们是防止回退的唯一记录）。
+2. **`tools/` 里补一条定点断言** —— 每个机制至少有一条能被 `npm test` 抓到的检查；
+   凡是「界面显示的东西」，都必须有「显示 == 实际运算」的守卫（`consistency.mjs` 那类）。
+3. **README 与 `docs/` 同步** —— 新数值进「想改一个数值」表，新机制进对应章节。
+   **没有断言与文档的机制，视为没做完。**
+
+> 换个说法：数值住在 `src/config.js`，理由住在注释与 `docs/`，验收住在 `tools/`。
+> 人只需要决定「要什么」，不需要同时记住「怎么算」。
 
 ---
 
@@ -25,7 +42,7 @@
 | 你想干嘛 | 用什么 | 需要装什么 |
 |---|---|---|
 | **点开就玩（最省事）** | **https://dawn-of-star.github.io/Public/** | 只需要浏览器 |
-| **下载到本地玩** | Release 里的 `CosmosOrigin-0.4.5-win-x64.exe` | **什么都不用装**，双击即玩 |
+| **下载到本地玩** | Release 里的 `KongxiangIncremental-0.5.1-win-x64.exe` | **什么都不用装**，双击即玩 |
 | 在本机改着玩 | `node serve.mjs` → http://127.0.0.1:8321/ | Node.js |
 | 改代码 / 自己打包 | 见下面「打包成 exe」 | Node.js + 首次 `npm install` |
 
@@ -71,6 +88,8 @@ test-034/
 ├── package.json                 版本号 + 依赖 + 打包配置（build 字段）
 ├── .npmrc                       Electron 下载源换成国内镜像
 ├── .gitignore / .gitattributes  node_modules、release、换行符与语言统计
+├── docs/                        ★ 设计文档（不参与打包与发布）
+│   └── INFINITY-UPGRADES.md     ∞ 层升级候选清单（含 AD 原版逐条对照）
 ├── electron/
 │   ├── main.cjs                 Electron 主进程：开窗口 + 菜单 + 单实例
 │   └── static-protocol.cjs      ★ 注册 app:// 协议，把静态文件当 HTTP 伺服
@@ -86,10 +105,13 @@ test-034/
 │   ├── ui.js                    所有 DOM 操作（唯一碰 DOM 的地方）
 │   └── main.js                  装配 + requestAnimationFrame 主循环
 ├── tools/                       开发期脚本（★ 不参与打包）
+│   ├── run-all.mjs              ★ `npm test`：一次跑完下面全部自检
 │   ├── smoke-protocol.cjs       自检：驱动真实的 app:// 处理函数发请求
-│   ├── smoke-electron.cjs       自检：真起 Electron 加载页面
-│   ├── inspect-asar.cjs         自检：列出放进 exe 的文件清单
+│   ├── smoke-electron.cjs       自检：真起 Electron 加载页面（需 npm install）
+│   ├── inspect-asar.cjs         自检：列出放进 exe 的文件清单（需打包产物）
 │   ├── headless.mjs             无头模拟 + S 判据自检
+│   ├── infinity-sim.mjs         ∞ 层（无限升级）的定点自检 + 会玩的玩家模拟
+│   ├── pace-model.mjs           ★ 节奏**数学模型**（解析式算时间，不跑游戏）
 │   └── …                        其余曲线/审计脚本
 ├── dist/                        break_eternity.js 2.1.3（第三方库）
 │   ├── break_eternity.esm.js    ← src/ 直接 import 这个
@@ -122,8 +144,8 @@ npm run dist         # 产出 release/ 下的便携版 exe + zip
 
 | 文件 | 说明 |
 |---|---|
-| `release/CosmosOrigin-0.4.5-win-x64.exe` | **给玩家的推荐版本**。单个自解压 exe，双击即玩，卸载就是删文件 |
-| `release/CosmosOrigin-0.4.5-win-x64.zip` | 解压即用的绿色目录。部分杀软会误报自解压包，备一个这个 |
+| `release/KongxiangIncremental-0.5.1-win-x64.exe` | **给玩家的推荐版本**。单个自解压 exe，双击即玩，卸载就是删文件 |
+| `release/KongxiangIncremental-0.5.1-win-x64.zip` | 解压即用的绿色目录。部分杀软会误报自解压包，备一个这个 |
 
 想快速验证打包有没有问题，用 `npm run dist:dir`（只出 `release/win-unpacked/`，几十秒）。
 
@@ -157,7 +179,7 @@ Win10 1809+ / Win11（x64）双击就能跑。发给不特定的人玩，这个�
 | `npm warn Unknown project config "electron_mirror"` | npm 11 开始对未知配置项报警告 | 无害，忽略即可。它只是提示这个写法在未来 npm 大版本会失效 |
 | 打包报 `EPERM: rename 'release\win-unpacked.tmp' -> 'release\win-unpacked'` | 有进程（杀软扫描 / 编辑器文件监听 / 索引服务）持有刚解压出来的文件句柄，Windows 下目录就无法重命名 | 等一会儿重试；或在 VSCode 里把项目文件夹临时关掉；实在不行把输出目录换到别处：`npm run dist -- --config.directories.output=D:\cosmos-build` |
 | 玩家反馈「双击 exe 没反应」 | 自解压型便携版 exe 常被杀软拦 | 让他下 `...-win-x64.zip` 那个解压版，或者把 exe 加进白名单 |
-| 想清掉存档重开 | 存档在 `%APPDATA%\CosmosOrigin` | 删掉这个目录即可（别删游戏目录，那里没有存档） |
+| 想清掉存档重开 | 存档在 `%APPDATA%\CosmosOrigin` | 删掉这个目录即可（别删游戏目录，那里没有存档）。<br>⚠️ 目录名**故意保留旧名**：改它 = 老存档立刻找不到 |
 
 ---
 
@@ -182,7 +204,7 @@ Win10 1809+ / Win11（x64）双击就能跑。发给不特定的人玩，这个�
 ```bash
 git init
 git add .
-git commit -m "chore: 宇宙起源 0.4.5，加入 Electron 打包与自动构建"
+git commit -m "chore: 空想增量 0.5.1，加入 Electron 打包与自动构建"
 git branch -M main
 git remote add origin https://github.com/<你的用户名>/<仓库名>.git
 git push -u origin main
@@ -194,8 +216,8 @@ git push -u origin main
 
 ```bash
 # 先把 package.json 的 version 和 tag 对齐
-git tag v0.4.5
-git push origin v0.4.5
+git tag v0.5.1
+git push origin v0.5.1
 ```
 
 推上去之后 GitHub Actions 会自动：装依赖 → 打包 exe → 创建 Release 把两个文件挂上去。
@@ -288,7 +310,7 @@ index.html
 打包后的 exe 里，最外面多一层壳：
 
 ```
-CosmosOrigin.exe
+空想增量.exe（打包后的实际文件名是 ASCII 的 `KongxiangIncremental.exe`，中文名只用做 productName）
   └─ electron/main.cjs（主进程）
        ├─ protocol.handle("app://", …)   把静态文件当 HTTP 伺服
        └─ BrowserWindow.loadURL("app://game/index.html")
@@ -297,6 +319,134 @@ CosmosOrigin.exe
 
 **所有大数运算都用 `Decimal`，不要用 `Math.pow`。**
 JS 的 `Number` 上限是 1.8e308，`Math.pow(4, 512)` 就会溢出成 `Infinity` 并污染整条链。
+
+---
+
+## 想改一个数值
+
+**关键是「唯一数据源」**：每个数值只有一处定义，改那里就够了；改完跑对应工具。
+（不用记住全部 —— 跑了 `npm test` 就知道有没有牵动别处。）
+
+| 你想改的东西 | 改哪里（唯一数据源） | 改完先跑这个 |
+|---|---|---|
+| 爬升快慢 / 曲线形状（e25→e308） | `QUANTUM.growthRateMax` + `CLIMB` | `npm run pace` → `pace:check` |
+| 单次无限的收益上限（④ 的 30 分钟） | `INFINITY_UPGRADES.ipTime.capSeconds` | `npm run sim:infinity:check` |
+| 量子门槛 / 捕获节奏 | `QUANTUM.zpeBaseCost` `zpeCostGrowth` `zpeCostExtraNerf` | `tools/quantum-curve.mjs`、`quantum-growth-tune.mjs` |
+| 暗能量与惩罚 | `DE_PENALTY`、`DE_UPGRADES` | `tools/de-tune.mjs`、`de-milestone-model.mjs` |
+| 无限门槛 / 无限升级 | `BREAK_INFINITY`、`INFINITY_UPGRADES` | `npm run sim:infinity:check` |
+| 打破无限之后的软上限 | `OVERLOAD` | `tools/infinity-sim.mjs --check` |
+| 价格曲线（含分段） | `REPEATABLE`、`VOID_UPGRADES`、`PIECEWISE` | `tools/audit.mjs` |
+| 乘区颜色 / 词条 / 图例 | `ZONES`、`ZONE_OF` | `tools/dom-smoke.mjs`（乘区登记守卫） |
+| 界面文字（卡片描述） | `config.js` 各条目的 `desc`（要**从公式算**） | `tools/dom-smoke.mjs`、`consistency.mjs` |
+
+---
+
+## 乘区与「全局加成」槽
+
+颜色 = **加成作用的位置**（同一颜色 = 叠在同一个位置）。这一格一色，是为了让玩家
+一眼看出「这两条升级是不是重复的」。**名字也必须各自唯一**，否则会出现
+「叫全局的其实是计数、叫计数的其实是全局」这类歧义。
+
+| 词条 | 乘区 | 谁在里面 |
+|---|---|---|
+| 熵 / 粒子 / 物质 / ZPE / 暗能量 | 五条产率线各自的位置 | 对应产线的升级与里程碑 |
+| **计数频率**（青） | 全局加成里的 `1 + 0.05×等级` 那一项 | 只有「计数频率」那条可重复升级 |
+| **全局**（金） | **真·全局**：`全局加成 = 梦想点项 × 计数频率项 × 暗能量项` | `v4`（抬梦想点系数） |
+| **价格**（灰） | 不产生产出，只改「买得起 / 多贵 / 要不要钱」 | `v9`、`m2`、`dm4` |
+| 量子（红） | 量子加成：熵 ×(1+q)、指数成长速率 R(q) | 第三层 |
+| 无限点（品红） | ∞ 层自己的收益 | ①②④ |
+| 梦想（虹） | 梦想点体系（花梦想点 / 作用于梦想系统） | 4 条自动化 + 烧梦想点的升级 |
+
+**顶部有一个「全局加成」槽**，显示那个乘积以及它的三个因子（各按自己的乘区上色）：
+`梦想点 ×1.4 · 计数频率 ×10.2 · 暗能量 ×8.7 = ×123`。
+`tools/consistency.mjs` 会断言「槽里显示的总值 == 三因子之积 == `globalMultiplier()`」。
+
+---
+
+## ∞ 层：无限升级
+
+大坍缩给**无限点**，无限点在「无限」页买升级（都不随大坍缩重置，UI 排成 **2×n 网格**，
+颜色按"加成落在哪个位置"取乘区色；只有作用于梦想系统的条目才用虹色）：
+
+| 名字 | 价格 | 效果 | 位置 |
+|---|---|---|---|
+| 无限增幅（可重复） | 1 起，每级 ×10 | 无限点收益 **×3/级** | 无限点 |
+| 零点耦合 | 1 | ZPE 倍率 += 无限点数量 | a区·加法区 |
+| 相变超频 | 1 | 相变仪速率 ×(1 + 无限点 × 0.5) | 暗能量 |
+| 无限长河 | 3 | 每次无限额外获得「**耗时÷60**」点，**单次最多计 30 分钟** | 无限点 |
+| 起点跃迁 I~IV | 20 / 40 / 80 / 300 | 每次大坍缩后以 **1e50 / 1e100 / 1e150 / 1e200** 物质开局 | 物质 |
+| 速率解放 I~IV | 10 / 100 / 1e3 / 1e4 | 量子成长速率上限 **×1.10 / ×1.10 / ×1.15 / ×1.20**（合计 ×1.6698） | 量子 |
+
+「打破无限」要 **128 点**。
+
+### 为什么要 ④ 这么一条"按耗时给点"
+
+大坍缩的深度收益是 `floor((log10M / 308.2547)²)`，而物质被硬顶在 `1e308.2547`，
+所以**每次无限恰好 1 点**；而一次无限又要 100 分钟左右。光靠深度收益，攒 128 点要 200 小时 —— 整层不可达。
+
+④ 把一部分收入改成**按耗时**给：`单次收入 = min(耗时, 30 分钟) ÷ 60 × 3^①等级`。
+**单次最多计 30 分钟**（学 AD 的做法：给上限，不让挂机无限赚），于是
+`IP/小时 = 60 × 3^① × min(T,1800)/T`：
+单次 ≤30 分钟吃满，100 分钟只拿 30%。这就给「把单次无限压进 30 分钟」定了个明确目标，
+速度类升级（起点跃迁 / 速率解放）也才有意义。而且这条收入不随深度指数膨胀，
+"引擎 → 量子 → 上限"那类反馈环不会被点燃。
+
+实测（`node tools/infinity-sim.mjs --hours=16`）：**约 10.4 小时 / 6 次无限**买下「打破无限」；
+数学模型（`npm run pace`）算出来是 **10.5 小时 / 6 次**，两者一致。
+
+### 为什么要「起点跃迁」和「速率解放」
+
+`1e25 → 1e308.25` 这一段（量子层解锁后爬升）的斜率 = 量子成长速率 R，而 **a区 的产率升级
+对它完全无效**（基础环比指数项小 1e200 倍，实测过）。所以只有两个真杠杆：
+
+- **抬 R 的上限** → 速率解放（`t ∝ 1/R₀`，每 +10% → 单次无限 −9%）
+- **缩短距离** → 起点跃迁（从 1e25 提到 1e200 → 单次 −37%）
+
+### 爬升形状：从直线改成 log 形（路线 1）
+
+原来 `d(log10M)/dt = R(q)` 是**常数** —— 曲线是一条直线，每 25 阶都是 8.5 分钟，像节拍器。
+现在加了 `CLIMB` 因子让斜率随深度递减：
+
+```
+R_eff = R(q) · 2^(−(L − 25)/100)        （L ≤ 25 时恒为 1，所以 e25 之前不受影响）
+⇒ L(t) = 25 + 100·log2(1 + ln2·R₀·t/100)      ← log 形
+```
+
+| 每 25 阶 | 改之前（直线） | 现在（log 形） |
+|---|---|---|
+| 25→50 | 8.5 min | **3.1 min** |
+| 125→150 | 8.5 min | 6.2 min |
+| 225→250 | 8.5 min | 12.4 min |
+| 275→300 | 8.5 min | 17.5 min |
+| **合计 e25→e308.25** | 96.7 min | **100.2 min** |
+
+**总时长几乎不变，但形状从直线变成了 log**：前期快 2.7 倍、末期慢 2 倍。
+`QUANTUM.growthRateMax` 必须和 `CLIMB.halvingOrders` 一起调（只改一个总时长会漂），
+参数表与断言见 [`tools/pace-model.mjs`](tools/pace-model.mjs)（`npm run pace` / `npm run pace:check`）。
+
+### 过载（打破无限之后的软上限）
+
+未打破无限时物质被**硬顶**在 `1e308.2547`，到顶强制大坍缩（原样保留）。
+**打破之后不再有硬顶**，改走过载：
+
+```
+拐点 = 308.2547 + log10(1.01) × 量子数           ← 量子推迟拐点（每量子 +1%）
+超出后：d(log10 M)/dt = R(q) · 2^(−(L − 拐点)/10)  ← 每 10 阶速率减半
+```
+
+为什么必须是"软"的：硬顶会让「再深一点」变成不可能，于是任何"用无限点买的东西去抬上限"的设计
+都会掉进 `cap = f(IP(cap))` 这个自指闭环 —— 要么卡死、要么刀刃爆炸（推导见
+[`docs/INFINITY-UPGRADES.md`](docs/INFINITY-UPGRADES.md)）。
+软上限把"能不能过去"换成"过去得有多慢"，进度永远有一点。
+
+实测（`node tools/infinity-sim.mjs`）：打破无限后物质能越过旧硬顶（12 小时到 `5.85e326`，+18 阶），
+而**前置段完全不变**（仍是硬顶 + 强制坍缩；6 次无限、约 9.7 小时买下「打破无限」）。
+
+### 下一步要加的无限升级
+
+16 格候选（含 AD 原版 16+2 条的逐条对照、以及「哪几条对 1e25→e308.25 段真的有效」的实测数字）
+在 [`docs/INFINITY-UPGRADES.md`](docs/INFINITY-UPGRADES.md)。结论是：**这 16 格里真正能加速那段的只有
+「抬 R 上限」与「抬高开局深度」两类**（已各实现 4 条），其余多数是结构性无效的装饰品 —— 原因见该文档第 0 节。
 
 ---
 

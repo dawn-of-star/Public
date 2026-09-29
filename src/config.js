@@ -3,34 +3,58 @@
  * 乘区定义（基础公式）—— **这是全项目的最高约束**
  * ══════════════════════════════════════════════════════════════
  *
- *   最终显示数值 = { [ 上一轮运算值 × a区 ] ^ b区 } × c区
+ * ── 规范形态 ──
  *
- *   ┌─ a区 = **加法池 × 乘法池**
- *   │        不带「最终」二字的所有加成。加法和乘法都在这里混乘。
- *   │        例：梦想点 `(1 + dp×0.02)`、粒子升级 `(1 + Σ等级×0.05)`、
- *   │            物质速率 `× 1.0625^等级`、虚空 v2 `× 1.5`、暗物质 `× 10^DM`
- *   │
- *   ├─ b区 = **指数区** —— 把**一个已经算好的倍率取幂**（不是把因子乘进去）
- *   │        ⚠️ 关键区别：
- *   │            `× m^等级` 是**因子**（每级乘 m）      -> a区
- *   │            `× 10^DM`  是**因子**                -> a区
- *   │            `(ZPE+1)^0.02` 产出的是**一个倍率**   -> a区
- *   │            **把上面那个倍率整体再取幂**          -> **b区** ✅
- *   │
- *   │        第一个成员：「无限升级4」——把现有的 zpeMultiplier 整体取 `^1.048`
- *   │            现有 = (ZPE+1)^0.02 × (v8?1.5) × (dm1?2)
- *   │            3.5e12 ZPE 时 = 5.346（用户看到的 5.35）-> ^1.048 = 5.794
- *   │            高 ZPE 时更明显：1e100 时 300 -> 394
- *   │        现状：**尚未实现**（无限升级系统还没做）
- *   │
- *   └─ c区 = **带「最终」二字**的加成（最终倍数加成）
- *            现状：只有量子一条（熵生产 `×(1+q)`）。
+ *   资源_next = { [ 资源_prev + (1 × 乘法区) + 加法区 ] ^ 指数区 } × 最终倍率区
  *
- * ── 已存在的「对值取幂」三处（形式上是 b区，但都没被当作 b区命名）──
- *   · `zpeMultiplier = (ZPE+1)^0.02`       产出倍率，被当 a区因子用
- *   · `zpeProductionPenalty` 里的 `DE^0.5`  产出惩罚倍率
- *   · `infinityPointGain` 里的 `深度^2`      产出无限点数量（不是倍率）
- *   这三处要不要正式归入 b区，等无限升级系统定案时一起处理。
+ *   a区 = 加法区 + 乘法区   「1 ×」里的 1 是各层的**基准常数**
+ *                           （BASE.trapBaseRate / matterPerParticle /
+ *                            autoConvertOutput / clickGain …），不是可有可无的写法
+ *   b区 = 指数区            对 `{...}` **整体**取幂
+ *   c区 = 最终倍率区        由**词条**判定：描述里带「最终」二字的加成/减益都算这一层
+ *
+ * ── 代码现状：四条必须记住的实现事实（改动前先读这四条）──
+ *
+ *   ① **a区作用在增量上**：`gain = 1 × 乘法区 + 加法区`，`资源 += gain × dt`。
+ *      加法和乘法在 a区里混乘（例：梦想点 `(1 + dp×0.02)`、粒子升级
+ *      `(1 + Σ等级×0.05)`、物质速率 `× 1.0625^等级`、虚空 v2 `× 1.5`）。
+ *
+ *   ② **b区当前恒等于 1** —— 运行路径上没有任何一层对 `{...}` 整体取幂。
+ *      这是**刻意的**：对值取幂会把曲线从「平移」改成「改形」，增益过于给力，
+ *      所以**前期加成一律不碰 b区**。想加 b区成员时，必须重新验 S 判据和环增益。
+ *
+ *   ③ **c区乘的是增量，不是 `{资源_prev + 增量}`**：
+ *          实现： 资源_next = 资源_prev + gain × 最终倍率区
+ *          规范： 资源_next = (资源_prev + gain) × 最终倍率区
+ *      两者只在「存量不被清空」的层上不等价。熵这一层等价（熵每 tick 被转换扣空，
+ *      存量只剩余数）；**将来把 c区 用到物质 / ZPE / 暗能量之前必须先定死这一点** ——
+ *      差的就是 `资源_prev × 最终倍率区` 这一项，那才是会跑飞的存量放大。
+ *
+ *   ④ **物质层的量子项是「等价写法的 b区」**，只是被记在 a区的加法端：
+ *          engine.js：`matterGain += M × R(q) × ln10 × dt`
+ *          等价于   ：`M_next = M × (1 + R·ln10·dt) = M ^ (1 + R·ln10·dt / ln M)`
+ *      指数略大于 1（且随 `ln M` 衰减）→ `d(log10 M)/dt = R(q)`，
+ *      即「每秒固定阶数」的真指数成长。它是当前**唯一**改形成长的机制。
+ *
+ * ── 公式覆盖不到的第四个动作（别硬塞进 a/b/c）──
+ *   · 交换 / 扣费：熵 → 粒子要扣 `times × threshold`；购买要扣价
+ *   · 跨层重置：大坍缩把物质/粒子/熵/熵阱/ZPE/暗能量/量子归零
+ *   所以「上一轮资源」不是无条件继承的 —— 这条公式只描述**生产**那一步。
+ *
+ * ── c区成员登记（靠词条，不靠颜色）──
+ *   现在只有一条：量子 → 熵生产 `×(1+q)`（见 quantumEntropyMultiplier）。
+ *   乘区配色（ZONES / ZONE_OF）里**没有** c区，它由描述里的「最终」二字标识，
+ *   所以界面上必须把这个词写出来（量子面板写的就是「最终倍率」），
+ *   否则玩家无法区分它和 a区的加成。
+ *
+ * ── 形式上是 b区、但不是（三处 pow 的归类）──
+ *   判据是**底数是什么**（详见 tools/zone-audit.mjs）：
+ *     · `Decimal.pow(常量, 等级/数量)` → 一个**因子** → a区
+ *     · `值.pow(指数)` 且**包住整个 `{...}`** → b区 ✅（现在没有）
+ *   现存三处「对值取幂」产出的都是 a区的东西：
+ *     · `zpeMultiplier = (ZPE+1)^0.02`        产出倍率，被当 a区因子用
+ *     · `zpeProductionPenalty` 里的 `DE^0.5`   产出惩罚倍率
+ *     · `infinityPointGain` 里的 `深度^2`       产出无限点**数量**（不是倍率）
  *
  * ── 历史误会 ──
  *   曾经把「代码里出现 pow() 」当成 b区越界，那是**语法判据**。
@@ -38,7 +62,9 @@
  */
 export const ZONE_RULES = {
   a: { name: "加法池 × 乘法池", hasFinalWord: false, raisesWholeValue: false },
+  /** ⚠️ 当前**恒为 1**：刻意不实现（见上面第 ② 条） */
   b: { name: "指数区", hasFinalWord: false, raisesWholeValue: true },
+  /** 由词条判定；当前唯一成员是量子 `×(1+q)`，且作用在**增量**上（见第 ③ 条） */
   c: { name: "最终倍数加成", hasFinalWord: true, raisesWholeValue: false },
 };
 
@@ -86,6 +112,10 @@ export const BASE = {
   tickMs: 50,
 
   /** 存档 key */
+  /**
+   * ⚠️ localStorage 的键**刻意不跟着游戏改名**（游戏已改名「空想增量」）：
+   *    改了键 = 浏览器里的老存档立刻读不到。要改就得配一次迁移读取。
+   */
   saveKey: "cosmos-origin-034",
   saveVersion: 2,
 };
@@ -111,14 +141,14 @@ export const ZPE_EXPONENT = 0.02;
 
 export const REPEATABLE = {
   /**
-   * 全局倍率。用粒子买，价格 ×2，效果 ×1.1/级。
+   * 计数频率。用粒子买，价格 ×2，效果 ×1.1/级。
    * S 贡献 = log(1.1)/log(2) = 0.1375
    */
   particleBoost: {
     id: "particleBoost",
-    name: "全局倍率",
+    name: "计数频率",
     /** kind 决定它进哪个乘区，formulas.js 按 kind 汇总 */
-    kind: "globalAdd",
+    kind: "countFreqAdd",
     currency: "particle",
     baseCost: 1,
     costMult: 2,
@@ -219,7 +249,7 @@ export const VOID_UPGRADES = {
     name: "虚空共鸣",
     cost: "300000",
     // ★ 文案已改：原描述是「系数从 0.02 → 0.08」，玩家看不懂系数是什么
-    desc: "梦想点的全局倍率加成从 每点 +2% 提升到 每点 +8%",
+    desc: "梦想点的全局加成系数：每点 +2% → +8%",
     rewardDream: true,
     note: "原稿此条完全无效（dreamCoefficient 写了没人读），已修",
   },
@@ -360,7 +390,7 @@ export const DE_MILESTONES = [
     id: "dm4b",
     need: "1000000",
     /**
-     * ★ 大胆的一次性解锁：**全局倍率作用于相变转换速率**（1e6 暗能量生效）。
+     * ★ 大胆的一次性解锁：**全局加成作用于相变转换速率**（1e6 暗能量生效）。
      *
      * ⚠️ 是「相变转换」（ZPE→暗能量，见 darkEnergyRate），
      *    不是「熵凝聚转换」（熵→粒子，见 particleRate）。
@@ -377,7 +407,7 @@ export const DE_MILESTONES = [
      *   · **完全不碰主环**：主环增益仍是 globalMult²，时间压缩不变
      *   · 门槛从 5e6 降到 1e6，是为了在峰值附近就生效（5e6 比峰值晚 2.2 个数量级）
      */
-    desc: "全局倍率作用于相变转换速率（ZPE → 暗能量）",
+    desc: "全局加成作用于相变转换速率（ZPE → 暗能量）",
     effect: { kind: "globalToConversion" },
   },
   {
@@ -503,7 +533,7 @@ export const DE_UPGRADES = {
       costParticle: (lv) => new Decimal(100).mul(new Decimal(R).pow(lv)),
       costMult: R,
       effectMult: M,
-      desc: (lv) => `每次暗能量转换的量 ×${new Decimal(M).pow(lv).toFixed(2)}`,
+      desc: (lv) => `每次暗能量转换的量 ×${new Decimal(M).pow(lv).toFixed(2)}（花粒子）`,
       firstRewardDream: true,
     };
   })(),
@@ -556,7 +586,7 @@ export const DE_UPGRADES = {
       piecewise: true,
       effectMult: M,
       costDarkEnergy: true,
-      desc: (lv) => `每次暗能量转换的量 ×${new Decimal(M).pow(lv).toFixed(2)}`,
+      desc: (lv) => `每次暗能量转换的量 ×${new Decimal(M).pow(lv).toFixed(2)}（花暗能量）`,
       firstRewardDream: true,
     };
   })(),
@@ -587,9 +617,18 @@ export const DE_UPGRADES = {
       costDarkEnergy: true,
       /** 每级给产出增量加多少 */
       perLevel: PER_LEVEL,
-      desc: (lv) => {
-        const inc = 0.15 + 0.5 + PER_LEVEL * lv;   // 假设 v5 已买
-        return `熵凝聚每级产出增量 +${(PER_LEVEL * lv).toFixed(2)}（转换率上限 ${(inc / 3).toFixed(3)}）`;
+      /**
+       * ★ 描述必须**从实际公式推导**，不能假设 v5 已买。
+       *
+       *   踩过：旧描述写死 `0.15 + 0.5 + 0.05L`（假设 v5），没买 v5 时显示的
+       *   "转换率上限"比真实值高 —— 又是「显示 vs 实际」那类问题。
+       *   所以这里接收 `state`（UI 会传），按实际是否买了 v5 算。
+       */
+      desc: (lv, state) => {
+        const v5 = state?.voidUpgrades?.v5 ? 0.5 : 0;
+        const inc = 0.15 + v5 + PER_LEVEL * lv;
+        return `熵凝聚每级产出增量 +${(PER_LEVEL * lv).toFixed(2)}` +
+          `（转换率上限 ${(inc / 3).toFixed(3)}${v5 ? "" : "，未含 v5"}）`;
       },
       firstRewardDream: true,
     };
@@ -616,7 +655,7 @@ export const DREAM_UPGRADES = [
     name: "相变自动化",
     cost: 1,
     target: "phaseShift",
-    desc: "自动购买「高效相变」（只要粒子够就买，不需要手动点击）",
+    desc: "自动购买「高效相变」",
     effect: { kind: "autoBuy", deUpgrade: "phaseShift" },
   },
   {
@@ -624,7 +663,7 @@ export const DREAM_UPGRADES = [
     name: "加速自动化",
     cost: 1,
     target: "vacuumAccel",
-    desc: "自动购买「真空加速」（只要 ZPE 够就买，不需要手动点击）",
+    desc: "自动购买「真空加速」",
     effect: { kind: "autoBuy", deUpgrade: "vacuumAccel" },
   },
   // ★ 新增两条：覆盖前面的暗能量升级 4（相变增幅）和 5（凝聚斜率）。
@@ -634,7 +673,7 @@ export const DREAM_UPGRADES = [
     name: "增幅自动化",
     cost: 1,
     target: "deGainBase",
-    desc: "自动购买「相变增幅」（只要暗能量够就买，不需要手动点击）",
+    desc: "自动购买「相变增幅」",
     effect: { kind: "autoBuy", deUpgrade: "deGainBase" },
   },
   {
@@ -642,7 +681,7 @@ export const DREAM_UPGRADES = [
     name: "斜率自动化",
     cost: 1,
     target: "convOutput",
-    desc: "自动购买「凝聚斜率」（只要暗能量够就买，不需要手动点击）",
+    desc: "自动购买「凝聚斜率」",
     effect: { kind: "autoBuy", deUpgrade: "convOutput" },
   },
 ];
@@ -687,7 +726,7 @@ export function dreamUpgradeEffects(state) {
  * ⚠️ 只有 **kind = "matterMul" / "globalMul"（指数形式 m^等级）** 才计入。
  *
  * 三种不计入的情况：
- *   · kind = "globalAdd" —— 效果是 `1 + k·等级`，**仿射（线性）**，不是乘法。
+ *   · kind = "countFreqAdd" —— 效果是 `1 + k·等级`，**仿射（线性）**，不是乘法。
  *     累计效果 = (1 + 0.05n)，线性增长。它的贡献是 log(log I) 级，
  *     对 S 的影响是 0。原稿的 particleBoost 就是这种。
  *   · kind = "convAdd"  —— 加法产出 + 加法阈值，净转换率有硬上限。
@@ -717,7 +756,7 @@ export function computeS(state) {
 
   // ① 三条可重复升级
   for (const cfg of Object.values(REPEATABLE)) {
-    if (cfg.kind === "convAdd" || cfg.kind === "globalAdd") continue;
+    if (cfg.kind === "convAdd" || cfg.kind === "countFreqAdd") continue;
     parts.push({ id: cfg.id, m: cfg.effect, r: cfg.costMult, kind: cfg.kind });
   }
 
@@ -781,7 +820,28 @@ export const ZONES = {
   matter: { name: "物质产出", cn: "物质", color: "#ff9800" },
   zpe: { name: "真空零点能", cn: "ZPE", color: "#2fa6f7" },
   de: { name: "暗能量", cn: "暗能量", color: "#b388ff" },
-  global: { name: "全局乘区", cn: "全局", color: "#ffd600" },
+  /**
+   * **全局加成**里的「计数频率」那一项（`1 + 0.05×等级`）。
+   *
+   * ⚠️ 命名踩过的坑：这一格原来叫「全局乘区」，而真正**全局**的东西是
+   *    `全局加成 = 梦想点项 × 计数频率项 × 暗能量项` 这个乘积本身（同时喂熵与物质两条线）。
+   *    把「计数型的那个升级」和「全局乘积」混用一个名字，就是歧义来源。
+   *    现在：**计数频率 = 那个升级**（青色），**全局加成 = 乘积**（金色，见下）。
+   */
+  countfreq: { name: "计数频率", cn: "计数频率", color: "#26a69a" },
+  /**
+   * **真·全局加成**：作用于所有产出线的那个乘积的组成部分（目前是 `v4` 抬梦想点系数）。
+   *
+   * 顶部有专门的「全局加成」槽显示它的分解，所以这里的色只是给它一个身份。
+   */
+  global: { name: "全局加成", cn: "全局", color: "#ffd600" },
+  /**
+   * **价格修正**：不产生产出，改的是「买得起 / 买多贵 / 要不要钱」。
+   *
+   * 原来这四条（`m2` 升级价格、`dm4` ZPE 折扣、`v9` 里程碑总开关）被塞在「全局乘区」里，
+   * 语义上是错的 —— 它们跟产率链没有乘法关系。
+   */
+  cost: { name: "价格修正", cn: "价格", color: "#90a4ae" },
   /**
    * 第三层：量子涨落。红色主色调。
    *
@@ -794,10 +854,17 @@ export const ZONES = {
    */
   dm: { name: "量子加成", cn: "量子", color: "#ff3b30" },
   /**
+   * ∞ 层自己的位置：**无限点收益**。
+   *
+   * ①「无限增幅」和 ④「无限长河」都不作用在产率链上，而是作用在无限点本身上。
+   * ⚠️ 原来和「全局」共用金色 —— 违反「同色 = 同位置」，现在改成品红。
+   */
+  ip: { name: "无限点收益", cn: "无限点", color: "#ff4d94" },
+  /**
    * 梦想点体系 —— **虹色**。
    *
    * 它不是一个产出乘区，而是「成就货币」的加成集合：
-   *   · 梦想点 → 全局倍率的基础加成（`1 + dp×0.02`）
+   *   · 梦想点 → 全局加成里的梦想点项（`1 + dp×0.02`）
    *   · 4 条自动化（相变 / 加速 / 增幅 / 斜率）
    *   · 梦想烬灭虚无、传承启迪（烧梦想点的升级）
    * 用户要求：凡涉及梦想点的都用虹色标识。
@@ -809,22 +876,22 @@ export const ZONES = {
 /** 每个 id 属于哪个乘区 */
 export const ZONE_OF = {
   // 可重复升级
-  particleBoost: "global",   // 全局产出
+  particleBoost: "countfreq", // ★ 就是「计数频率」本身：1 + 0.05×等级
   matterBoost: "matter",     // 只影响物质
   entropyCoeff: "particle",  // 熵→粒子的转换
   // 虚空升级
   v1: "zpe",        // ZPE 产出
   v2: "entropy",    // 熵产出
   v3: "matter",     // 粒子→物质
-  v4: "global",     // 梦想点的全局倍率
+  v4: "global",     // ★ 抬「梦想点项」的系数 —— 真·全局（那个乘积的因子之一）
   v5: "particle",   // 熵凝聚
   v6: "zpe",        // ZPE 产出
   v7: "entropy",    // 点击熵
   v8: "zpe",        // ZPE 倍率
-  v9: "global",     // 里程碑总开关
+  v9: "cost",       // ★ 价格修正：达到阈值自动获取（等价于价格 0）
   // ZPE 里程碑
   m1: "entropy",    // 点击熵
-  m2: "global",     // 升级价格
+  m2: "cost",       // ★ 价格修正：升级价格
   m3: "matter",     // 物质产出
   m4: "entropy",    // 熵阱有效数量（同时影响 ZPE，但标主要作用）
   m5: "matter",     // 熵阱价格
@@ -834,12 +901,42 @@ export const ZONE_OF = {
   dm1: "zpe",
   dm2: "particle",  // 熵凝聚阈值
   dm3: "entropy",   // 熵产出
-  dm4: "global",    // ZPE 折扣
+  dm4: "cost",      // ★ 价格修正：ZPE 折扣
+  dm4b: "de",       // ★ 漏登记过：全局加成作用于**相变转换**（ZPE→暗能量）
   dm5: "de",
   // 暗能量升级
+  //
+  // ⚠️ 五条都要在这里登记，否则卡片拿不到乘区色（`zoneOf` 会回退成默认色，
+  //    看起来像"加成区不对"）。踩过：deGainBase / convOutput 漏登记。
+  //
+  //   dreamAnnihilation / phaseShift / vacuumAccel / deGainBase —— 都在**暗能量**这条线上
+  //   （phaseShift 与 deGainBase 位置相同：都乘"每次转换的量"，只是花粒子 vs 花暗能量）
+  //   convOutput —— 改的是**熵凝聚的产出斜率**，落在粒子转换那条线
   dreamAnnihilation: "de",
   phaseShift: "de",
   vacuumAccel: "de",
+  deGainBase: "de",
+  convOutput: "particle",
+  // ∞ 层：无限升级（按"加成落在哪个位置"给色 —— ①④ 落在无限点本身，② 落 ZPE，③ 落相变仪，
+  //   起点跃迁改的是物质存量起点，速率解放改的是量子成长速率上限）
+  ipDouble: "ip",
+  ipTime: "ip",
+  ipToZpe: "zpe",
+  ipToTransmuter: "de",
+  start50: "matter",
+  start100: "matter",
+  start150: "matter",
+  start200: "matter",
+  rate110: "dm",
+  rate121: "dm",
+  rate139: "dm",
+  rate167: "dm",
+  // 梦想点一次性升级（量子页）——它们**就是梦想系统本身**，所以归 dream 乘区（虹色）。
+  // 漏登记过：这四条曾经没有乘区，卡片只能靠硬编码的 `zone-dm` 上红色，语义是错的。
+  autoPhase: "dream",
+  autoVacuum: "dream",
+  autoDeGainBase: "dream",
+  autoConvOutput: "dream",
 };
 
 export function zoneOf(id) {
@@ -855,7 +952,7 @@ export function zoneOf(id) {
  *
  *   坍缩阈值  T_n = 1e25 × 10^(10n)      每档 ×1e10
  *   暗物质    DM_n = 10n                 每次 +10
- *   全局倍率  M    = 10^DM
+ *   全局加成  M    = 10^DM
  *
  *   验算：M_n = 10^(10n)，而 T_n = 1e25 × 10^(10n) = 1e25 × M_n
  *   => **每轮只需要把「基础曲线」推到 1e25，剩下的全部由倍率承担。**
@@ -884,7 +981,7 @@ export const COLLAPSE = {
 // ══════════════════════════════════════════════════════════
 //
 // 原来的第三层是「临界坍缩阶梯」：
-//   物质跨过阈值(×1e5 递进) -> 领一份暗物质 -> 全局倍率 ×10^DM
+//   物质跨过阈值(×1e5 递进) -> 领一份暗物质 -> 全局加成 ×10^DM
 //
 // 它被整个删掉，原因有两层：
 //
@@ -926,14 +1023,40 @@ export const QUANTUM = {
   zpeCostExtraNerf: 2,
   /**
    * ★ 量子 → 指数成长速率的**上限**（数量级/秒）。
-   *   283 阶 ÷ 0.05 = 5660 秒 = 1.57 小时（目标区间 1~2 小时）。
+   *
+   * ── 为什么是 0.147 而不是 0.05（路线 1）──
+   *   0.05 配上"斜率恒定"就是一条**直线**：每 25 阶都是 8.5 分钟，玩家感受是节拍器。
+   *   现在抬到 0.147，并由 `CLIMB` 让斜率随深度递减 ——
+   *   总时长几乎不变（96.7 → 100.2 分钟），但形状变成 **log 形**：
+   *     前 25 阶 3.1 分钟，最后 58 阶 23.9 分钟。
+   *   0.147 是按 `L = knee + D·log2(1 + ln2·R₀·t/D)` 反解出来的（t = 100 分钟）。
+   *   想调就改这个数 + `CLIMB.halvingOrders`，然后跑 `tools/pace-model.mjs` 复算。
    */
-  growthRateMax: 0.05,
+  growthRateMax: 0.147,
   /** 达到上限一半时所需的量子数（越小越慷慨）。0.5 时阶梯段约 1.75 小时 */
   growthRateHalf: 0.5,
   /** 每对给几个量子（用户设定：一对） */
   perPair: 2,
 
+};
+
+/**
+ * 爬升形状（路线 1）：让 `e25 → e308.25` 那段从直线变成 log 形。
+ *
+ *   `R_eff = R(q) · 2^(−(L − knee)/halvingOrders)`      （L ≤ knee 时恒为 1）
+ *
+ * knee = 25 = 量子层解锁点（`COLLAPSE.unlockMatter` 的对数）——
+ * 所以 **e25 之前那 6 分钟完全不受影响**（那段由基础环决定，本来就不走量子项）。
+ *
+ * ⚠️ 必须和 `QUANTUM.growthRateMax` **一起**调：只改一个总时长就会漂。
+ *    参数表与定点断言见 `tools/pace-model.mjs`（--check / --sweep）。
+ *    实测（_sim 沙盒，非本仓库）：直线 97.6 分钟 → log 形 105.1 分钟。
+ */
+export const CLIMB = {
+  /** 拐点（阶）：从这一阶开始衰减。直接取量子层解锁点（1e25 → 25），单一数据源 */
+  knee: Math.log10(Number(COLLAPSE.unlockMatter)),
+  /** 每多少阶速率减半 */
+  halvingOrders: 100,
 };
 
 /**
@@ -966,10 +1089,15 @@ export const QUANTUM = {
  *
  *   `half` 决定「量子要多少才推得动」：half 越小越慷慨（用户说升级区可以慷慨）。
  */
-export function quantumGrowthRate(quantum) {
+/**
+ * @param {Decimal|number} quantum
+ * @param {Decimal|number} [rateMult=1] ∞ 层「速率解放」对**上限**的倍率
+ *        （用倍率而不是绝对值，这样最终 R₀ 定成多少都不必重算升级数值）
+ */
+export function quantumGrowthRate(quantum, rateMult = 1) {
   const q = quantum instanceof Decimal ? quantum : new Decimal(quantum ?? 0);
   if (q.lte(0)) return new Decimal(0);
-  const max = new Decimal(QUANTUM.growthRateMax);
+  const max = new Decimal(QUANTUM.growthRateMax).mul(rateMult);
   const half = new Decimal(QUANTUM.growthRateHalf);
   return max.mul(q).div(q.add(half));
 }
@@ -998,10 +1126,17 @@ export function quantumZpeRequirement(pairs) {
 }
 
 /**
- * 量子 → **熵生产的最终倍率**（基础公式**最外层**的 `× 最终倍数加成`）。
+ * 量子 → **熵生产的最终倍率**（**c区**的一个成员）。
  *
  * 形式 `1 + q`：线性，基于当前持有的量子量。
  * 它本身无界，但**量子会被大坍缩重置**，所以单周期内 q 有上限，不跨周期膨胀。
+ *
+ * ⚠️ 两个实现事实（改这一条之前先看）：
+ *   · 它是**目前唯一**的 c区成员 —— c区靠描述里的「最终」二字登记，
+ *     所以界面上这一条写的是「最终倍率」（index.html 的量子面板）。
+ *   · 它乘的是**本 tick 的增量**（entropyRate 的乘法链里一环），
+ *     不是 `{存量 + 增量}`。熵这一层两种写法等价（熵进来就被阈值转换扣空），
+ *     但**别的层若要用 c区，先回 config.js 顶部第 ③ 条定死语义**。
  */
 export function quantumEntropyMultiplier(quantum) {
   const q = quantum instanceof Decimal ? quantum : new Decimal(quantum ?? 0);
@@ -1077,8 +1212,16 @@ export const BREAK_INFINITY = {
   /** 首次大坍缩的固定收益 */
   firstCrunchIP: 1,
 
-  /** 买下「打破无限」要多少无限点 */
-  unlockCost: 1,
+  /**
+   * 买下「打破无限」要多少无限点。
+   *
+   * ⚠️ 128 是**刻意的**：这一层的设计意图是「让玩家多次无限来攒无限点」，
+   *    所以门槛要落在大约 3~5 次无限才能攒到的位置。
+   *    每次无限的基础收益是 `firstCrunchIP = 1`，所以光靠大坍缩本体是攒不到的 ——
+   *    真正的收入来自「无限长河」（④，按耗时给点）和「无限增幅」（①，收益翻倍）。
+   *    实测（tools/infinity-sim.mjs）：约 5 次无限 / 8~9 小时可买下。
+   */
+  unlockCost: 128,
 
   /**
    * 突破后的收益公式：`floor(base × (log10(物质) / log10(MAX))^exponent)`
@@ -1095,6 +1238,169 @@ export const BREAK_INFINITY = {
 
 /** 大坍缩阈值的显示字符串（和实际值同源，不会脱节） */
 export const CRUNCH_AT_LABEL = `1e${BREAK_INFINITY.maxLog10.toFixed(4)}`;
+
+// ══════════════════════════════════════════════════════════
+// 过载（打破无限之后的**软上限**）
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 未打破无限时，物质被**硬顶**在 1e308.2547，到顶强制大坍缩（保持原样）。
+ * 打破之后不再有硬顶，改走**过载**：超过拐点后，物质产出速率每 `halvingOrders` 阶减半。
+ *
+ *   `d(log10 M)/dt = R(q) · 2^(−(L − 拐点)/halvingOrders)`
+ *
+ * ── 为什么必须是"软"的 ──
+ *   硬顶会让"再深一点"变成不可能，于是任何"用无限点买的东西去抬上限"的设计
+ *   都会掉进自指闭环：`cap = f(IP(cap))` 只有两种结局 —— 卡死（f 次线性）
+ *   或刀刃爆炸（f 超线性）。软上限把"能不能过去"换成"过去得有多慢"：
+ *     · 进度永远有一点，不存在死锁；
+ *     · 深度按 `ΔL = D·log2(1 + ln2·R·t/D)` 随时间**对数增长**（D = halvingOrders）；
+ *     · 实测（_sim 沙盒）：D=10 → +43 阶/次、约 6 分钟；D=20 → +87 阶/次、约 8.4 分钟。
+ *
+ * ── 量子推迟拐点 ──
+ *   `拐点 = 308.2547 + 每量子推迟阶数 × 量子数`
+ *   0.00432137 = log10(1.01)，即「每量子稳定 1%」的等价写法。
+ *   拐点越高，能推得越深（收益侧的无限点也随深度增长）。
+ *   ⚠️ 注意这里只乘**当前量子数**：大坍缩会把量子清零，所以每轮都要重新累积。
+ */
+export const OVERLOAD = {
+  /** 超出拐点后，每多少阶速率减半 */
+  halvingOrders: 10,
+  /** 每个量子把拐点往上推迟多少阶（log10(1.01)，即「每量子 +1%」） */
+  quantumDelayPerQuantum: 0.00432137,
+};
+
+/** 过载拐点（阶）—— 物质超过它就开始减速 */
+export function overloadThreshold(state) {
+  const q = state.quantum instanceof Decimal ? state.quantum : new Decimal(state.quantum ?? 0);
+  return new Decimal(BREAK_INFINITY.maxLog10).add(q.mul(OVERLOAD.quantumDelayPerQuantum));
+}
+
+// ══════════════════════════════════════════════════════════
+// ∞ 层：无限升级（全部用无限点购买，不随大坍缩重置）
+// ══════════════════════════════════════════════════════════
+
+/**
+ * 四个无限升级。效果的计算全部在 formulas.js / engine.js，
+ * 这里只放**数据**（价格 + 效果参数 + 描述），和别的层一个规矩。
+ *
+ * ── 为什么这一层要有 ④「无限长河」──
+ *   大坍缩本体的收益是 `floor((log10M / 308.2547)²)`，而物质被硬顶在 1e308.2547，
+ *   所以**每次无限恰好 1 个无限点**，而一次无限又要 ≥ 94 分钟（R 被钳在 0.05 阶/秒）。
+ *   光靠它，攒 128 点要 200 小时 —— 整层不可达。
+ *   ④ 把一部分收入改成**按耗时**给（与深度无关），于是：
+ *     · 每次无限都能稳拿一笔，攒门槛只需要几次无限；
+ *     · 单位时间的收入是常数 `60 × 2^①等级` 点/小时，不随深度膨胀，
+ *       这条环因此天然稳定（详细推导见 RESPONSES/设计讨论）。
+ *
+ * ── ④ 的读法 ──
+ *   每 60 秒累计 1 点（连续结算，不是每秒跳一次）。所以
+ *     「一次 104 分钟的无限」= 104 点；「一次 5 分钟的无限」= 5 点。
+ *   两者**每小时都是 60 点**（再乘 ① 的倍率）—— 收快收慢收益相同，
+ *   想强制「多次无限」的话需要给 ④ 加耗时上限（当前没加，属待定项）。
+ */
+export const INFINITY_UPGRADES = {
+  /** ① 无限点收益 ×3/级（可重复；首价 1，每级 ×10，效果 ×3） */
+  ipDouble: {
+    id: "ipDouble",
+    name: "无限增幅",
+    repeatable: true,
+    firstCost: 1,
+    costMult: 10,
+    effectMult: 3,
+    zone: "ip",
+    desc: "每次无限的无限点收益 ×3",
+  },
+
+  /** ② 无限点数量 → ZPE 倍率的**加法区**（a区） */
+  ipToZpe: {
+    id: "ipToZpe",
+    name: "零点耦合",
+    cost: 1,
+    perIp: 1,
+    zone: "zpe",
+    desc: "ZPE 倍率 += 无限点数量",
+  },
+
+  /** ③ 无限点 → 相变仪转换速率（ZPE → 暗能量） */
+  ipToTransmuter: {
+    id: "ipToTransmuter",
+    name: "相变超频",
+    cost: 1,
+    perIp: 0.5,
+    zone: "de",
+    desc: "相变仪速率 ×(1 + 无限点×0.5)",
+  },
+
+  /** ④ 每次无限的**耗时**换成无限点（每 60 秒 1 点） */
+  ipTime: {
+    id: "ipTime",
+    name: "无限长河",
+    cost: 3,
+    /** 每多少秒给 1 点 */
+    secondsPerPoint: 60,
+    /**
+     * 耗时上限（秒）：**1800 = 30 分钟**。
+     *
+     * 为什么要它：没有上限时"收快收慢每小时都是 60 点"，速度类升级（速率解放/起点跃迁）
+     * 对 IP 收入完全没有意义。加上限后 `IP/小时 = 60 × 3^① × min(T,1800)/T`：
+     *   · 单次 ≤ 30 分钟 → 吃满；
+     *   · 单次 100 分钟（现状）→ 只有 30%。
+     * 于是"把单次无限压进 30 分钟"变成明确目标（AD 的同类做法也是给上限而不是无限膨胀）。
+     * 沙盒实测代价很小：打破无限 4.1h → 4.8h。
+     */
+    capSeconds: 1800,
+    zone: "ip",
+    desc: "每次无限额外获得「耗时÷60」点，单次最多计 30 分钟",
+  },
+
+  // ══════════════════════════════════════════════════════════
+  // ★ 加速「e25 → e308.25」那一段的两条线
+  //
+  //   为什么要专门为这一段加升级：这段的斜率 = 量子成长速率 R（被 growthRateMax 钳制），
+  //   而 a区 的产率升级对它完全无效（基础环比指数项小 1e200 倍，实测过）。
+  //   所以只有两个真杠杆：**抬 R 的上限** 与 **缩短距离（抬高开局物质）**。
+  //   量化（tools/infinity-sim.mjs / _sim 沙盒对齐过）：
+  //     · 速率类：`t ∝ 1/R₀`，每 +10% → 单次无限 −9%
+  //     · 起点类：从 1e25 提到 1e200 → 单次无限 −39%（在爬升衰减开启后）
+  // ══════════════════════════════════════════════════════════
+
+  /**
+   * 起点跃迁 I~IV：**每次大坍缩之后**以指定的物质开局（AD `skipReset*` 的同源设计）。
+   *
+   * ⚠️ 只抬高"起点"，不改变上限 —— 所以它不改形，只缩短距离。
+   *    数值用**绝对深度**（1e50/1e100/1e150/1e200），与最终的爬升衰减参数无关。
+   */
+  start50: { id: "start50", name: "起点跃迁 I", cost: 20, startLog10: 50, zone: "matter", desc: "每次大坍缩后以 1e50 物质开局" },
+  start100: { id: "start100", name: "起点跃迁 II", cost: 40, startLog10: 100, zone: "matter", desc: "每次大坍缩后以 1e100 物质开局" },
+  start150: { id: "start150", name: "起点跃迁 III", cost: 80, startLog10: 150, zone: "matter", desc: "每次大坍缩后以 1e150 物质开局" },
+  start200: { id: "start200", name: "起点跃迁 IV", cost: 300, startLog10: 200, zone: "matter", desc: "每次大坍缩后以 1e200 物质开局" },
+
+  /**
+   * 速率解放 I~IV：抬高量子成长速率的**上限**（`QUANTUM.growthRateMax`）的倍率。
+   *
+   * ⚠️ 用**百分比**而不是绝对值，这样最终 R₀ 定成多少都自动跟随 ——
+   *    避免"改了 knee/D 以后这几条升级的数值全要重算"。
+   */
+  rate110: { id: "rate110", name: "速率解放 I", cost: 10, rateMult: 1.10, zone: "dm", desc: "量子成长速率上限 ×1.10" },
+  rate121: { id: "rate121", name: "速率解放 II", cost: 100, rateMult: 1.10, zone: "dm", desc: "量子成长速率上限 ×1.10" },
+  rate139: { id: "rate139", name: "速率解放 III", cost: 1000, rateMult: 1.15, zone: "dm", desc: "量子成长速率上限 ×1.15" },
+  rate167: { id: "rate167", name: "速率解放 IV", cost: 10000, rateMult: 1.20, zone: "dm", desc: "量子成长速率上限 ×1.20" },
+};
+
+/**
+ * 无限升级的展示顺序（UI 与自检共用）。
+ * UI 会把它排成 2×n 网格，所以顺序就是格子顺序（左→右、上→下）。
+ */
+export const INFINITY_ORDER = [
+  "ipDouble", "ipToZpe",
+  "ipToTransmuter", "ipTime",
+  "start50", "start100",
+  "start150", "start200",
+  "rate110", "rate121",
+  "rate139", "rate167",
+];
+
 
 /** 大坍缩能拿多少无限点 */
 export function infinityPointGain(matter, broken) {
@@ -1116,9 +1422,78 @@ export function crunchThreshold() {
 
 /**
  * 无限点 → 效果（暂定，用户说之后再调）。
- * 现在是纯计数 + 解锁「打破无限」。
+ * 现在是纯计数 + 解锁「打破无限」+ 四个无限升级（见 INFINITY_UPGRADES）。
  */
 export function infinityPointEffect(ip) {
   const n = ip instanceof Decimal ? ip : new Decimal(ip ?? 0);
   return { count: n };
+}
+
+/**
+ * 无限升级的价格（**唯一数据源**）。
+ *
+ * UI 显示的和引擎扣的必须走这一个函数 —— 这是 consistency.mjs 的硬要求，
+ * 也是「显示 vs 实际」那类 bug 的唯一防法。
+ *
+ * @returns {Decimal} 价格（可重复升级按当前等级算）
+ */
+export function infinityUpgradeCost(state, id) {
+  const cfg = INFINITY_UPGRADES[id];
+  if (!cfg) return new Decimal(0);
+  if (cfg.repeatable) {
+    const lv = state.ipDoubleLevel ?? new Decimal(0);
+    return new Decimal(cfg.firstCost).mul(Decimal.pow(cfg.costMult, lv));
+  }
+  return new Decimal(cfg.cost ?? 0);
+}
+
+/** 该无限升级已经买了吗（可重复的返回等级 > 0） */
+export function infinityUpgradeOwned(state, id) {
+  const cfg = INFINITY_UPGRADES[id];
+  if (!cfg) return false;
+  if (cfg.repeatable) return (state.ipDoubleLevel ?? new Decimal(0)).gt(0);
+  if (cfg.startLog10 != null) return (state.startBought ?? {})[id] === true;
+  if (cfg.rateMult != null) return (state.speedBought ?? {})[id] === true;
+  if (id === "ipToZpe") return state.ipToZpeBought === true;
+  if (id === "ipToTransmuter") return state.ipToTransmuterBought === true;
+  if (id === "ipTime") return state.ipTimeBought === true;
+  return false;
+}
+
+/**
+ * 「起点跃迁」当前生效的开局深度（对数）。没买就是 0（= 从 0 开始，原样）。
+ * 取**已买里最高的一档**（它们是递进的，不是相加的）。
+ */
+export function infinityStartLog10(state) {
+  let best = 0;
+  for (const cfg of Object.values(INFINITY_UPGRADES)) {
+    if (cfg.startLog10 == null) continue;
+    if ((state.startBought ?? {})[cfg.id] === true && cfg.startLog10 > best) best = cfg.startLog10;
+  }
+  return best;
+}
+
+/** 「速率解放」对量子成长速率上限的总倍率（各档相乘） */
+export function infinityRateMult(state) {
+  let m = new Decimal(1);
+  for (const cfg of Object.values(INFINITY_UPGRADES)) {
+    if (cfg.rateMult == null) continue;
+    if ((state.speedBought ?? {})[cfg.id] === true) m = m.mul(cfg.rateMult);
+  }
+  return m;
+}
+
+/**
+ * ④「无限长河」的一次性结算：把本次无限的耗时换成无限点。
+ *
+ * ⚠️ 收益要同时吃 ① 的 ×3^等级 —— 用户明确要求（"能吃到无限升级1的加成"）。
+ *    `capSeconds` 为 null 时不设上限（当前设定）。
+ *    返回的是**这次多给的点数**（供日志/自检用）。
+ */
+export function timeInfinityPointGain(state, seconds) {
+  if (!state.ipTimeBought) return new Decimal(0);
+  const cap = INFINITY_UPGRADES.ipTime.capSeconds;
+  const counted = cap == null ? seconds : Math.min(seconds, cap);
+  const base = new Decimal(counted).div(INFINITY_UPGRADES.ipTime.secondsPerPoint);
+  return base.mul(Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0));
 }

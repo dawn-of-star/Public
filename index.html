@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>宇宙起源 demo
+<title>空想增量 demo
 </title>
 <link rel="stylesheet" href="./css/amoled.css">
 <!--
@@ -21,7 +21,7 @@
 
   <!-- ══════════ 顶栏 ══════════ -->
   <div class="topbar">
-    <h1>宇宙起源 <small>demo· AMOLED</small></h1>
+    <h1>空想增量 <small>demo· AMOLED</small></h1>
     <div class="spacer"></div>
     <div class="tools">
       <button class="tool" id="btn-save">保存</button>
@@ -70,9 +70,9 @@
       <div class="r" id="rate-de">+0/s</div>
     </div>
     <div class="res">
-      <div class="k">全局倍率</div>
+      <div class="k">全局加成</div>
       <div class="v glow-gold" id="global-multiplier">×1.00</div>
-      <div class="r" id="global-detail">梦想点 × 全局倍率升级 × 暗能量</div>
+      <div class="r" id="countfreq-detail">梦想点 × 计数频率 × 暗能量</div>
     </div>
   </div>
 
@@ -226,7 +226,7 @@
             量子系统未解锁
             <div class="cond">
               <div>需要基础物质达到 <b id="q-need">1e25</b></div>
-              <div style="margin-top:6px">解锁后观测到<b>量子涨落</b>：真空零点能每达到一个门槛，就捕获一对极稀有的<b>量子</b></div>
+              <div style="margin-top:6px">真空零点能每达到一个门槛，就捕获一对<b>量子</b></div>
             </div>
           </div>
 
@@ -242,11 +242,10 @@
             <div class="detail" style="margin-bottom:14px">
             </div>
 
-            <h2 style="margin-top:18px">梦想点升级 <span class="badge" id="dream-badge">0 / 2</span></h2>
+            <h2 style="margin-top:18px">梦想点升级 <span class="badge" id="dream-badge">0 / 4</span></h2>
             <div class="stack" id="dream-upgrade-list"></div>
             <p style="margin-top:8px;font-size:11.5px;color:var(--text-faint);line-height:1.7">
-              梦想点是<b>成就货币</b>（每获得一个非重复加成 +1，永不重置）。
-              暗物质工程里只有第一个升级烧梦想点。
+              梦想点：每获得一个非重复加成 +1，永不重置。
             </p>
 
             <h2 style="margin-top:18px">量子涨落捕获</h2>
@@ -258,14 +257,13 @@
             <div class="bar" style="margin-bottom:12px"><i id="quantum-bar" style="background:linear-gradient(90deg,#5a0d08,#ff3b30)"></i><span id="quantum-bar-text">0%</span></div>
 
             <div class="detail">
-              <div><span>熵生产倍率</span><b id="quantum-mult" class="glow-dm">×1.00</b></div>
+              <div><span>熵生产的最终倍率</span><b id="quantum-mult" class="glow-dm">×1.00</b></div>
               <div><span>暗能量获取</span><b id="quantum-degain" class="glow-red">×1.00</b></div>
               <div><span>暗能量倍率</span><b id="quantum-demult" class="glow-accent">×1.00</b></div>
               <div><span>指数成长速率</span><b id="quantum-grow" class="glow-accent">0.000 阶/秒</b></div>
             </div>
             <p style="margin-top:10px;font-size:11.5px;color:var(--text-faint);line-height:1.7">
-              每捕获一对量子，<b>熵生产倍率 ×(1+量子数)</b>（线性），
-              <b>ZPE 产出倍率 ×(1+log10 量子数)</b>（对数）。<br>
+              每捕获一对，上面四项各涨一次。量子在大坍缩时清零（累计对数保留）。
             </p>
           </div>
         </div>
@@ -284,6 +282,7 @@
               <div><span>无限点</span><b id="val-infinity" class="glow-gold">0</b></div>
               <div><span>已大坍缩</span><b id="bigcrunch-count">0</b></div>
               <div><span>触发阈值</span><b id="bigcrunch-need">1e308.2547</b></div>
+              <div><span>过载</span><b id="overload-state">无</b></div>
               <div><span>本次可得</span><b id="bigcrunch-gain" class="glow-gold">1</b></div>
             </div>
 
@@ -298,10 +297,20 @@
             <button class="btn" id="btn-break-infinity" hidden>
               <div class="btn-row">
                 <span class="btn-name">打破无限</span>
-                <span class="btn-lv" id="break-state">花 1 无限点</span>
+                <span class="btn-lv" id="break-state">花 128 无限点</span>
               </div>
-              <div class="btn-desc">解除物质上限；大坍缩改为<b>手动</b>，收益随深度增长 —— 这就是超过 e308.25 之后的「削弱」</div>
+              <div class="btn-desc">解除物质上限；大坍缩改为<b>手动</b>，收益随深度增长</div>
             </button>
+
+            <h2 style="margin-top:18px">无限升级 <span class="badge" id="inf-upgrade-count">0 / 12</span></h2>
+            <div class="detail" style="margin-bottom:10px">
+              <div><span>本小时无限点收入</span><b id="inf-income" class="glow-gold">0</b></div>
+              <div><span>本次无限已耗时</span><b id="inf-elapsed">0s</b></div>
+            </div>
+            <div class="inf-grid" id="inf-upgrade-list"></div>
+            <p style="margin-top:8px;font-size:11.5px;color:var(--text-faint);line-height:1.7">
+              无限点来自<b>深度收益</b>与<b>耗时收益</b>（「无限长河」，与深度无关）。
+            </p>
 
             <h2 style="margin-top:18px">大坍缩会重置</h2>
             <div class="detail">
@@ -309,7 +318,7 @@
               <div><span>三条升级等级</span><b>归零</b></div>
               <div><span>ZPE / 暗能量</span><b>归零</b></div>
               <div><span>量子</span><b>归零</b></div>
-              <div><span>无限点</span><b class="glow-gold">保留</b></div>
+              <div><span>无限点 / 无限升级</span><b class="glow-gold">保留</b></div>
               <div><span>梦想点</span><b class="rainbow">保留</b></div>
               <div><span>虚空升级 / 两种里程碑</span><b class="glow-green">保留</b></div>
             </div>

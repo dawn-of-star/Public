@@ -336,4 +336,97 @@ if (state) {
 }
 const guardFailed = typeof logGuard === "string" && logGuard.startsWith("❌");
 
-process.exit(caught || guardFailed ? 1 : 0);
+// ══════════════════════════════════════════════════════════
+// 回归守卫：∞ 层（无限升级）面板必须真的画出来，且买下后文本跟随公式
+// ══════════════════════════════════════════════════════════
+// 这一层是「数据驱动生成 UI」的第三处（另两处是虚空升级、梦想点升级），
+// 踩过的坑同源：config 里加了条目、ui.js 忘了 build，于是面板永远空白。
+// 所以这里既查"四个按钮都画出来了"，也查"买下后描述会从公式刷新"。
+let infGuard = "未跑";
+if (state) {
+  const engine = await import(new URL("../src/engine.js", import.meta.url).href);
+  const { crunchThreshold, INFINITY_ORDER } = await import(new URL("../src/config.js", import.meta.url).href);
+  const infIds = INFINITY_ORDER;                 // ★ 数据驱动：加一条升级就自动纳入守卫
+  const drawn = infIds.filter((id) => byId.get(`inf-btn-${id}`)).length;
+  // ⚠️ 无限面板要解锁后才会渲染升级行（renderInfinity 会提前 return），
+  //    所以这里先把 peakMatter 顶到阈值 —— 否则测的是"隐藏状态下的空描述"。
+  state.peakMatter = crunchThreshold();
+  state.infinityPoints = state.infinityPoints.add(1e6);      // 给足点数，直接买 ④
+  const bought = engine.buyInfinityUpgrade(state, "ipTime");
+  for (let i = 0; i < 3; i++) { simNow += 16.67; const fn = rafQueue.shift(); if (fn) fn(simNow); }
+  const desc = byId.get("inf-ipTime-desc")?.textContent ?? "";
+  const ok = drawn === infIds.length && bought.ok && /点\/小时/.test(desc);
+  infGuard = ok ? `✅ ${infIds.length} 个升级已渲染（2×n 网格），买下后文本跟随公式` : `❌ 异常（画了 ${drawn}/${infIds.length}，买入=${bought.ok}，描述="${desc}"）`;
+  console.log(`  ∞ 面板          ${infGuard}`);
+
+  // ★ 再过一遍「已打破无限 + 落在过载区」的分支。
+  //   renderInfinity 里那段只有打破之后才走；不显式构造的话，线上是第一次执行它 ——
+  //   而"render 抛异常 → rAF 循环永久停住"正是这个项目踩过的坑。
+  const { overloadThreshold } = await import(new URL("../src/config.js", import.meta.url).href);
+  const { default: Dec } = await import(new URL("../dist/break_eternity.esm.js", import.meta.url).href);
+  state.brokenInfinity = true;
+  state.resources.matter = Dec.pow(10, overloadThreshold(state).add(15));   // 超拐点 15 阶 → ×0.35
+  for (let i = 0; i < 3; i++) { simNow += 16.67; const fn = rafQueue.shift(); if (fn) fn(simNow); }
+  const ovText = byId.get("overload-state")?.textContent ?? "";
+  const ovOk = /超 [0-9.]+ 阶/.test(ovText);
+  console.log(`  过载显示        ${ovOk ? "✅ 已打破时显示因子与超出阶数" : `❌ 异常（"${ovText}"）`}`);
+  console.log();
+  if (!ovOk) infGuard = `❌ 过载显示异常（"${ovText}"）`;
+}
+const guardFailed2 = guardFailed || infGuard.startsWith("❌");
+
+// ══════════════════════════════════════════════════════════
+// 回归守卫：乘区登记完整性 + 梦想卡的虹色
+// ══════════════════════════════════════════════════════════
+// 用户截图报的两个问题，根因都是"数据登记漏了一条"：
+//   ① `deGainBase` / `convOutput` 没进 ZONE_OF —— 卡片拿不到乘区色（加成区看起来不对）
+//   ② 梦想卡只加了 `rainbow-card`（静态 border-image），名字上没有 `.rainbow` ——
+//      所以"第一个颜色不动"（虹色文字才有 dreamHue 动画）
+// 所以这里既查数据（每个会被 UI 渲染的 id 都要有乘区），也查渲染结果（虹色类必须在）。
+let zoneGuard = "未跑";
+{
+  const cfgMod = await import(new URL("../src/config.js", import.meta.url).href);
+  const ids = [
+    ...Object.keys(cfgMod.REPEATABLE),
+    ...Object.keys(cfgMod.VOID_UPGRADES),
+    ...Object.keys(cfgMod.DE_UPGRADES),
+    ...cfgMod.DREAM_UPGRADES.map((d) => d.id),
+    ...cfgMod.INFINITY_ORDER,
+    ...cfgMod.ZPE_MILESTONES.map((m) => m.id),
+    ...cfgMod.DE_MILESTONES.map((m) => m.id),
+  ];
+  const missing = ids.filter((id) => {
+    const key = cfgMod.ZONE_OF[id];
+    return !key || !cfgMod.ZONES[key];
+  });
+  // 渲染结果：梦想卡的名字必须带 rainbow（否则虹色是静态的）
+  const dreamHtml = cfgMod.DREAM_UPGRADES
+    .map((d) => byId.get(`dream-btn-${d.id}`)?.innerHTML ?? "")
+    .join("");
+  const dreamRainbow = cfgMod.DREAM_UPGRADES.length > 0 &&
+    cfgMod.DREAM_UPGRADES.every((d) => /class="btn-name rainbow"/.test(byId.get(`dream-btn-${d.id}`)?.innerHTML ?? ""));
+  const undefinedZone = [...byId.keys()].filter((k) => (byId.get(k)?.className ?? "").includes("zone-undefined"));
+  // ★ 顶部「全局加成」槽必须真的显示三个因子（各带自己的乘区色）——
+  //   它是「全局（乘积）」和「计数频率（那个升级）」不再混淆的**可视依据**。
+  const slot = byId.get("countfreq-detail")?.innerHTML ?? "";
+  const slotOk = ["zone-dream", "zone-countfreq", "zone-de"].every((c) => slot.includes(c)) &&
+    /梦想点 ×[\d.]+/.test(slot) && /计数频率 ×[\d.]+/.test(slot) && /暗能量 ×[\d.]+/.test(slot);
+  // ★ 乘区图例：每个乘区必须恰好出现一次，且虹色那一格用渐变块
+  //   （加新乘区时最容易忘的就是图例 —— 词条上色了但图例里没有）
+  const legend = byId.get("zone-legend")?.innerHTML ?? "";
+  const zoneKeys = Object.keys(cfgMod.ZONES);
+  const legendBad = zoneKeys.filter((k) => (legend.split(`item zone-${k}`).length - 1) !== 1);
+  const rainbowSwatch = (legend.split("swatch-rainbow").length - 1) ===
+    zoneKeys.filter((k) => cfgMod.ZONES[k].rainbow).length;
+  const legendOk = legendBad.length === 0 && rainbowSwatch && legend.includes("zone-cost") && legend.includes("zone-global");
+  const ok = missing.length === 0 && dreamRainbow && undefinedZone.length === 0 && slotOk && legendOk;
+  zoneGuard = ok
+    ? `✅ ${ids.length} 个 id 都有乘区；图例 ${zoneKeys.length} 格各一次；梦想卡虹色动画类齐全；全局加成槽显示三因子分解`
+    : `❌ 缺乘区登记：${missing.join(",") || "无"}｜图例异常：${legendBad.join(",") || "无"}（彩虹块 ${rainbowSwatch}）` +
+      `｜梦想卡彩虹：${dreamRainbow}｜zone-undefined：${undefinedZone.join(",") || "无"}｜槽分解：${slotOk}（"${slot.slice(0, 90)}"）`;
+  console.log(`  乘区登记        ${zoneGuard}`);
+  console.log();
+}
+const guardFailed3 = guardFailed2 || zoneGuard.startsWith("❌");
+
+process.exit(caught || guardFailed3 ? 1 : 0);

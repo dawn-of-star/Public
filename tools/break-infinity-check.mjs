@@ -2,7 +2,7 @@
 /** tools/break-infinity-check.mjs —— 验证「打破无限」三阶段 */
 
 import Decimal from "../dist/break_eternity.esm.js";
-import { BREAK_INFINITY, infinityPointGain, crunchThreshold } from "../src/config.js";
+import { BREAK_INFINITY, CRUNCH_AT_LABEL, infinityPointGain, crunchThreshold } from "../src/config.js";
 import { newState } from "../src/state.js";
 import { breakInfinity, doBigCrunch, tick } from "../src/engine.js";
 import { canBigCrunch } from "../src/formulas.js";
@@ -14,7 +14,7 @@ console.log("=".repeat(76));
 console.log("打破无限：三阶段验证");
 console.log("=".repeat(76));
 console.log();
-console.log(`  阈值 ${BREAK_INFINITY.crunchAt}   解锁价 ${BREAK_INFINITY.unlockCost} 无限点`);
+console.log(`  阈值 ${CRUNCH_AT_LABEL}   解锁价 ${BREAK_INFINITY.unlockCost} 无限点`);
 console.log();
 
 const st = newState();
@@ -35,9 +35,12 @@ console.log();
 
 // ── 阶段 ②：打破无限 ──
 console.log("【② 花无限点打破】");
+// 解锁价现在是 128（设计意图：逼玩家多次无限攒点），所以先把点数补足
+st.infinityPoints = st.infinityPoints.add(BREAK_INFINITY.unlockCost);
+const before = st.infinityPoints.toString();
 const ok = breakInfinity(st);
 console.log(`  breakInfinity()       ${ok ? "✅ 成功" : "❌ 失败"}`);
-console.log(`  无限点                ${st.infinityPoints.toString()}（花掉 1）`);
+console.log(`  无限点                ${before} -> ${st.infinityPoints.toString()}（花掉 ${BREAK_INFINITY.unlockCost}）`);
 console.log(`  brokenInfinity        ${st.brokenInfinity}  ${st.brokenInfinity ? "✅" : "❌"}`);
 console.log();
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * tools/de-milestone-model.mjs —— dm4b「全局倍率作用于相变速率」的数学模型
+ * tools/de-milestone-model.mjs —— dm4b「全局加成作用于相变速率」的数学模型
  *
  * ── 要回答的问题 ──
  * 暗能量在自反馈下会不会失控？还是仅仅「涨得快一点」？
@@ -41,7 +41,7 @@ const rate = (de, withMilestone) =>
   (withMilestone ? deMult(de) : 1) * penalty(de);
 
 console.log(hr(80));
-console.log("dm4b 数学模型：全局倍率作用于相变转换速率");
+console.log("dm4b 数学模型：全局加成作用于相变转换速率");
 console.log(hr(80));
 console.log();
 console.log(`  速率(DE) = ${DE_PENALTY.coeff===0.001?"":"C × "}${"deMult(DE)^k"} × penalty(DE)`);

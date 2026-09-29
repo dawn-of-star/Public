@@ -87,6 +87,25 @@ export function newState() {
     /** 历史最高物质（用于显示和里程碑判定） */
     peakMatter: D(0),
 
+    // ── ∞ 层：无限升级（用无限点买，不随大坍缩重置）──
+    /** ① 无限增幅：无限点收益 ×2 的等级 */
+    ipDoubleLevel: D(0),
+    /** ② 零点耦合：无限点 → ZPE 倍率加法区（一次性） */
+    ipToZpeBought: false,
+    /** ③ 相变超频：无限点 → 相变仪速率（一次性） */
+    ipToTransmuterBought: false,
+    /** ④ 无限长河：本次无限的耗时换无限点（一次性） */
+    ipTimeBought: false,
+    /** 「起点跃迁 I~IV」已购标记（id -> true）：决定每次大坍缩的开局物质 */
+    startBought: {},
+    /** 「速率解放 I~IV」已购标记（id -> true）：抬高量子成长速率上限 */
+    speedBought: {},
+    /**
+     * 本次无限已经过去的秒数（④ 的计量口径）。
+     * tick 每帧累加、大坍缩清零 —— 和离线结算同源，不依赖 wall clock。
+     */
+    infinityElapsed: 0,
+
     // ── 量子（第三版模型：ZPE 门槛捕获）──
     /** 当前量子数量（每捕获一对 +2） */
     quantum: new Decimal(0),
@@ -106,7 +125,7 @@ export function newState() {
     /**
      * 设计本意：取代 AD 的成就系统。
      * 每获得一个**非重复**的加成（升级 / 里程碑 / 新机制）就 +1，永不重置。
-     * 它同时是全局倍率的来源（1 + 梦想点 × 系数）。
+     * 它同时是全局加成的来源（1 + 梦想点 × 系数）。
      */
     dreamPoints: D(0),
     /** 已经给过梦想点的加成 key，防止重复发 */
@@ -285,6 +304,19 @@ export function deserialize(raw) {
   s.bigCrunchCount = dec(raw.bigCrunchCount);
   s.brokenInfinity = raw.brokenInfinity === true;
   s.peakMatter = dec(raw.peakMatter);
+
+  // ── ∞ 层：无限升级 ──
+  s.ipDoubleLevel = dec(raw.ipDoubleLevel);
+  s.ipToZpeBought = bool(raw.ipToZpeBought);
+  s.ipToTransmuterBought = bool(raw.ipToTransmuterBought);
+  s.ipTimeBought = bool(raw.ipTimeBought);
+  s.startBought = raw.startBought && typeof raw.startBought === "object"
+    ? Object.fromEntries(Object.entries(raw.startBought).filter(([, v]) => v === true))
+    : {};
+  s.speedBought = raw.speedBought && typeof raw.speedBought === "object"
+    ? Object.fromEntries(Object.entries(raw.speedBought).filter(([, v]) => v === true))
+    : {};
+  s.infinityElapsed = num(raw.infinityElapsed, 0);
 
   // ── 量子 ──
   s.quantum = dec(raw.quantum);

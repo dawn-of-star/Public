@@ -2,7 +2,7 @@
 # 自动构建 Windows exe
 #
 # 两种触发方式：
-#   1. 推送 tag（推荐）：git tag v0.4.5 && git push origin v0.4.5
+#   1. 推送 tag（推荐）：git tag v0.5.1 && git push origin v0.5.1
 #      → 构建完成后自动创建一个 Release，把 exe/zip 挂上去，别人点开就能下载
 #   2. 手动：GitHub 网页 → Actions → 构建 Windows 版 → Run workflow
 #      → 构建完在本次运行的 Artifacts 里下载（不创建 Release）
@@ -17,7 +17,7 @@ name: 构建 Windows 版
 on:
   push:
     tags:
-      - "v*"          # 例如 v0.4.5
+      - "v*"          # 例如 v0.5.1
   workflow_dispatch:  # 允许在网页上手动点按钮触发
 
 # 创建 Release 需要写权限。不写这一行 GITHUB_TOKEN 默认只读，发布步骤会 403。
@@ -78,7 +78,7 @@ jobs:
       - name: 上传构建产物
         uses: actions/upload-artifact@v7
         with:
-          name: CosmosOrigin-windows-x64
+          name: KongxiangIncremental-windows-x64
           path: |
             release/*.exe
             release/*.zip
