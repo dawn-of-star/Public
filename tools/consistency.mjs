@@ -413,6 +413,30 @@ console.log();
     };
   });
 
+  // ④ 重复购买类升级**只在关键节点**（1/5/10/50/100…）写日志
+  //    没有这条守卫的话，自动获取模式一帧买几百级 -> 日志面板被刷爆（重要事件被冲走）
+  check("重复购买升级只在关键节点写日志", () => {
+    const s = newState();
+    s.resources.matter = D("1e60");              // 给足物质，直接连买
+    const wrote = [];
+    for (let i = 1; i <= 10; i++) {
+      const n0 = s.log.length;
+      buyRepeatable(s, "matterBoost");
+      if (s.log.length > n0) wrote.push(i);
+    }
+    // 批量买也应当**只写一条**（跨过多个关键节点时）
+    const n1 = s.log.length;
+    buyRepeatable(s, "matterBoost", true);
+    const bulkWrote = s.log.length - n1;
+    const expect = [1, 5, 10];
+    const ok = JSON.stringify(wrote) === JSON.stringify(expect) && bulkWrote <= 1;
+    return {
+      ok,
+      detail: `连买到 10 级，写日志的等级 = [${wrote.join(", ")}]（期望 [${expect.join(", ")}]）；` +
+        `之后"买满"写了 ${bulkWrote} 条`,
+    };
+  });
+
   const bad = results.filter((x) => !x).length;
   pricePass += results.length - bad;
   priceFail += bad;

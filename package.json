@@ -1,6 +1,6 @@
 {
   "name": "kongxiang-incremental",
-  "version": "0.5.1",
+  "version": "0.6.5",
   "private": true,
   "description": "空想增量 —— 网页增量游戏（原生 ES 模块 + break_eternity.js，零构建）",
   "type": "module",

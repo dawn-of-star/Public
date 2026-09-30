@@ -2,7 +2,7 @@
 
 网页增量游戏。原生 ES 模块 + `break_eternity.js`，**零构建、零 npm install**。
 
-当前版本：**0.5.1**
+当前版本：**0.6.5**
 
 > **改完东西只想确认没搞坏？** 跑 `npm test`（或 `node tools/run-all.mjs`）——
 > 一次跑完 22 个自检脚本，只把失败细节打出来。约 4 分钟。
@@ -42,7 +42,7 @@
 | 你想干嘛 | 用什么 | 需要装什么 |
 |---|---|---|
 | **点开就玩（最省事）** | **https://dawn-of-star.github.io/Public/** | 只需要浏览器 |
-| **下载到本地玩** | Release 里的 `KongxiangIncremental-0.5.1-win-x64.exe` | **什么都不用装**，双击即玩 |
+| **下载到本地玩** | Release 里的 `KongxiangIncremental-0.6.5-win-x64.exe` | **什么都不用装**，双击即玩 |
 | 在本机改着玩 | `node serve.mjs` → http://127.0.0.1:8321/ | Node.js |
 | 改代码 / 自己打包 | 见下面「打包成 exe」 | Node.js + 首次 `npm install` |
 
@@ -89,7 +89,10 @@ test-034/
 ├── .npmrc                       Electron 下载源换成国内镜像
 ├── .gitignore / .gitattributes  node_modules、release、换行符与语言统计
 ├── docs/                        ★ 设计文档（不参与打包与发布）
-│   └── INFINITY-UPGRADES.md     ∞ 层升级候选清单（含 AD 原版逐条对照）
+│   ├── INFINITY-UPGRADES.md     ∞ 层升级清单（含 AD 原版逐条对照）
+│   ├── ZPE-ENGINE.md            ZPE 引擎（已实现 · 虚空科技第二个子页 · 含极强软上限）
+│   ├── IP-ECONOMY.md            无限点 → 永恒（24 小时档 · 各机制"省多少小时"的表）
+│   └── NEKO.md                  neko（草稿：梦想系统的自动化扩展）
 ├── electron/
 │   ├── main.cjs                 Electron 主进程：开窗口 + 菜单 + 单实例
 │   └── static-protocol.cjs      ★ 注册 app:// 协议，把静态文件当 HTTP 伺服
@@ -112,6 +115,14 @@ test-034/
 │   ├── headless.mjs             无头模拟 + S 判据自检
 │   ├── infinity-sim.mjs         ∞ 层（无限升级）的定点自检 + 会玩的玩家模拟
 │   ├── pace-model.mjs           ★ 节奏**数学模型**（解析式算时间，不跑游戏）
+│   ├── base-vs-quantum.mjs      ★ 量「基础产率 vs 量子项」——判断某个加速升级有没有用
+│   ├── zpe-engine-lab.mjs       ★ ZPE 引擎机制（打破无限后）的杠杆实测与 a<1 红线
+│   ├── ip-economy-lab.mjs       ★ 无限点经济模型（到 1e308.25 要什么；档位阶梯 / --fit / --sweep）
+│   ├── crunch-speed-lab.mjs     ★ 一次大坍缩要爬多久 + 各机制"省多少小时"（24h 档的提速表）
+│   ├── eternity-lab.mjs         永恒层公式（照 AD 抄）与「没有强制触发」的源码守卫
+│   ├── coinage-lab.mjs          ★ IP 侧机制自检（铸币闸门 / 三种软上限 / 坍缩加速器 / 档位里程碑）
+│   ├── stage-timing.mjs         ★★ 全阶段成长时长表（**跑真引擎**，含节奏缺口断言 + 里程碑快照）
+│   ├── pacing-reference.mjs     ★★ 以 AD 世界记录为标尺的节奏对照（目标 = WR × 1.25/×1.5）
 │   └── …                        其余曲线/审计脚本
 ├── dist/                        break_eternity.js 2.1.3（第三方库）
 │   ├── break_eternity.esm.js    ← src/ 直接 import 这个
@@ -144,8 +155,8 @@ npm run dist         # 产出 release/ 下的便携版 exe + zip
 
 | 文件 | 说明 |
 |---|---|
-| `release/KongxiangIncremental-0.5.1-win-x64.exe` | **给玩家的推荐版本**。单个自解压 exe，双击即玩，卸载就是删文件 |
-| `release/KongxiangIncremental-0.5.1-win-x64.zip` | 解压即用的绿色目录。部分杀软会误报自解压包，备一个这个 |
+| `release/KongxiangIncremental-0.6.5-win-x64.exe` | **给玩家的推荐版本**。单个自解压 exe，双击即玩，卸载就是删文件 |
+| `release/KongxiangIncremental-0.6.5-win-x64.zip` | 解压即用的绿色目录。部分杀软会误报自解压包，备一个这个 |
 
 想快速验证打包有没有问题，用 `npm run dist:dir`（只出 `release/win-unpacked/`，几十秒）。
 
@@ -327,9 +338,19 @@ JS 的 `Number` 上限是 1.8e308，`Math.pow(4, 512)` 就会溢出成 `Infinity
 **关键是「唯一数据源」**：每个数值只有一处定义，改那里就够了；改完跑对应工具。
 （不用记住全部 —— 跑了 `npm test` 就知道有没有牵动别处。）
 
+**日志策略**：重复购买类升级（三条主升级、暗能量可重复升级、∞ 的①、ZPE 引擎等级）
+**只在关键节点写日志** —— 等级跨过 `1 / 5 / 10 / 50 / 100 / 500 / 1000 …`（×5、×2 交替）才写一条。
+规则集中在 `src/state.js` 的 `KEY_LEVELS` / `pushLevelLog()`：
+自动获取模式一帧能买几百级，逐级写会把面板刷爆（真正重要的事件被冲走）。
+
+**子页**：虚空科技标签页**鼠标悬停**（或键盘 focus）会浮出两条入口 ——
+「升级 / 里程碑」与「ZPE 引擎」；子页激活时父标签保持高亮。实现见 `#tab-flyout-void`（index.html）
+与 `activateTab()`（`src/ui.js`，面板白名单 `ALL_PANELS` 必须同步）。
+
 | 你想改的东西 | 改哪里（唯一数据源） | 改完先跑这个 |
 |---|---|---|
 | 爬升快慢 / 曲线形状（e25→e308） | `QUANTUM.growthRateMax` + `CLIMB` | `npm run pace` → `pace:check` |
+| **想加"加速无限"的升级** | 先跑 `tools/base-vs-quantum.mjs` 确认它打的是真杠杆 | `tools/pace-model.mjs` 算收益 |
 | 单次无限的收益上限（④ 的 30 分钟） | `INFINITY_UPGRADES.ipTime.capSeconds` | `npm run sim:infinity:check` |
 | 量子门槛 / 捕获节奏 | `QUANTUM.zpeBaseCost` `zpeCostGrowth` `zpeCostExtraNerf` | `tools/quantum-curve.mjs`、`quantum-growth-tune.mjs` |
 | 暗能量与惩罚 | `DE_PENALTY`、`DE_UPGRADES` | `tools/de-tune.mjs`、`de-milestone-model.mjs` |
@@ -337,6 +358,7 @@ JS 的 `Number` 上限是 1.8e308，`Math.pow(4, 512)` 就会溢出成 `Infinity
 | 打破无限之后的软上限 | `OVERLOAD` | `tools/infinity-sim.mjs --check` |
 | 价格曲线（含分段） | `REPEATABLE`、`VOID_UPGRADES`、`PIECEWISE` | `tools/audit.mjs` |
 | 乘区颜色 / 词条 / 图例 | `ZONES`、`ZONE_OF` | `tools/dom-smoke.mjs`（乘区登记守卫） |
+| ZPE 引擎（打破无限后） | `ZPE_ENGINE`（解锁 10 无限点 / 三条机制的阈值都在这里） | `tools/zpe-engine-lab.mjs --check`（a<1 红线） |
 | 界面文字（卡片描述） | `config.js` 各条目的 `desc`（要**从公式算**） | `tools/dom-smoke.mjs`、`consistency.mjs` |
 
 ---
@@ -373,7 +395,7 @@ JS 的 `Number` 上限是 1.8e308，`Math.pow(4, 512)` 就会溢出成 `Infinity
 | 无限增幅（可重复） | 1 起，每级 ×10 | 无限点收益 **×3/级** | 无限点 |
 | 零点耦合 | 1 | ZPE 倍率 += 无限点数量 | a区·加法区 |
 | 相变超频 | 1 | 相变仪速率 ×(1 + 无限点 × 0.5) | 暗能量 |
-| 无限长河 | 3 | 每次无限额外获得「**耗时÷60**」点，**单次最多计 30 分钟** | 无限点 |
+| 无限长河 | 3 | **每秒实时获得「1÷60」点**（吃 ① 的加成），单次最多计 30 分钟 | 无限点 |
 | 起点跃迁 I~IV | 20 / 40 / 80 / 300 | 每次大坍缩后以 **1e50 / 1e100 / 1e150 / 1e200** 物质开局 | 物质 |
 | 速率解放 I~IV | 10 / 100 / 1e3 / 1e4 | 量子成长速率上限 **×1.10 / ×1.10 / ×1.15 / ×1.20**（合计 ×1.6698） | 量子 |
 
@@ -384,12 +406,19 @@ JS 的 `Number` 上限是 1.8e308，`Math.pow(4, 512)` 就会溢出成 `Infinity
 大坍缩的深度收益是 `floor((log10M / 308.2547)²)`，而物质被硬顶在 `1e308.2547`，
 所以**每次无限恰好 1 点**；而一次无限又要 100 分钟左右。光靠深度收益，攒 128 点要 200 小时 —— 整层不可达。
 
-④ 把一部分收入改成**按耗时**给：`单次收入 = min(耗时, 30 分钟) ÷ 60 × 3^①等级`。
+④ 把一部分收入改成**按耗时**给：`单次收入 = min(耗时, 30 分钟) ÷ 60 × 3^①等级`，
+而且是**每秒实时进账**（对齐 AD 的 `ipGen`：被动产点，不是结算时一次性给）。
 **单次最多计 30 分钟**（学 AD 的做法：给上限，不让挂机无限赚），于是
 `IP/小时 = 60 × 3^① × min(T,1800)/T`：
 单次 ≤30 分钟吃满，100 分钟只拿 30%。这就给「把单次无限压进 30 分钟」定了个明确目标，
 速度类升级（起点跃迁 / 速率解放）也才有意义。而且这条收入不随深度指数膨胀，
 "引擎 → 量子 → 上限"那类反馈环不会被点燃。
+
+**实时化的两个好处**（`tick` 里按 `dt` 进账，离线结算走的是同一个 `tick`，所以挂机也算）：
+
+- 挂机回来点**已经在账上**，不必等大坍缩入账 —— ④ 顺手把"离线有进展"这件事变成真的；
+- "单次 30 分钟"从结算时才算，变成卡片上的**实时数字**（超时还会提示"该大坍缩了"）。
+- 大坍缩**只发深度部分**，耗时部分早已实时发完（否则就是重复发放，有断言守着）。
 
 实测（`node tools/infinity-sim.mjs --hours=16`）：**约 10.4 小时 / 6 次无限**买下「打破无限」；
 数学模型（`npm run pace`）算出来是 **10.5 小时 / 6 次**，两者一致。

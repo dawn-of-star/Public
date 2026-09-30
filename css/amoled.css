@@ -435,13 +435,40 @@ button { font: inherit; cursor: pointer; }
    每个标签对应一个「系统」，颜色沿用 ZONES 的定义。
 */
 
+/*
+  ⚠️ 这里**不能**用 `overflow-x: auto`（曾经就是它把子页浮出层裁掉的）。
+     原因：CSS 规范里只要一个轴不是 `visible`，另一个轴的 `visible` 会被算成 `auto` ——
+     于是 `.tabs` 成了**滚动容器**，两个后果：
+       1. 绝对定位的 `.tab-flyout`（在它内部）被**裁剪**，伸不出去；
+       2. 标签条自己变成可纵向滚动的，而滚动条又被下面的规则藏了 ——
+          现象就是「看不到浮出层，但滚轮能把它滚出来」（用户实测到的怪现象）。
+     现在改成**换行**：窄屏时标签排两行，浮出层可以正常盖在面板上。
+     守卫：`tools/dom-smoke.mjs` 的「虚空子页」会检查这些祖先里没有 overflow。
+*/
+/* ── 规则行 / 注释行（模仿 0.3.4 的「消耗 A → B」短句）──────────────
+   `.rule` 是**影响玩法判断**的那一句话（放区块顶部、带左侧色条，醒目）；
+   `.note` 是补充说明（次要、灰一点）。
+   两者刻意共用同一套排版，避免界面上出现第三种文本风格。 */
+.rule {
+  margin: 0 0 12px;
+  padding: 7px 10px;
+  border-left: 2px solid var(--accent);
+  background: rgba(255,255,255,.03);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: 12px; line-height: 1.75; color: var(--text-dim);
+}
+.rule b { color: var(--text-bright); font-weight: 600; }
+.note {
+  margin: 8px 0 0;
+  font-size: 11.5px; line-height: 1.7; color: var(--text-faint);
+}
+.note b { color: var(--text-dim); font-weight: 600; }
+
 .tabs {
-  display: flex; gap: 2px;
+  display: flex; gap: 2px; flex-wrap: wrap;
   border-bottom: 1px solid var(--line);
   margin: -14px -16px 14px -16px;   /* 抵消 .card 的 padding */
   padding: 0 7px;
-  overflow-x: auto;
-  scrollbar-width: none;
 }
 .tabs::-webkit-scrollbar { display: none; }
 
@@ -474,6 +501,37 @@ button { font: inherit; cursor: pointer; }
   font-weight: 500;
 }
 .tab.active .tag { background: color-mix(in srgb, var(--zone) 22%, transparent); color: var(--zone); }
+
+/* ── 带子页的标签（虚空科技 → 升级/里程碑 ｜ ZPE 引擎）─────────────────
+   悬停（或键盘 focus-within）时浮出两条入口。
+   浮出层用绝对定位贴着标签下沿，父级是 `.tab-wrap`（`<button>` 里不能放 `<button>`）。
+   ⚠️ 它必须待在**没有 overflow** 的祖先里，否则会被裁掉（见上面 `.tabs` 的注释）。 */
+.tab-wrap { position: relative; display: flex; }
+.tab-flyout {
+  position: absolute; top: 100%; left: 0; z-index: 30;
+  display: none; flex-direction: column; min-width: 152px;
+  background: var(--bg-card); border: 1px solid var(--line-strong);
+  border-radius: 0 0 var(--radius) var(--radius);
+  box-shadow: 0 10px 24px rgba(0,0,0,.55);
+  overflow: hidden;
+}
+.tab-wrap:hover .tab-flyout,
+.tab-wrap:focus-within .tab-flyout { display: flex; }
+.flyout-item {
+  background: transparent; border: none; text-align: left;
+  color: var(--text-dim); padding: 9px 12px;
+  font-size: 12px; font-weight: 600; white-space: nowrap;
+  border-left: 3px solid transparent;
+  transition: background .12s, color .12s, border-color .12s;
+}
+.flyout-item:hover { background: rgba(255,255,255,.045); color: var(--text-bright); }
+.flyout-item.active {
+  color: var(--zone, var(--accent));
+  border-left-color: var(--zone, var(--accent));
+  background: rgba(255,255,255,.03);
+}
+/* 触发飞出的那个标签本身，在子页激活时也保持高亮 */
+.tab-wrap.sub-active .tab { color: var(--zone, var(--accent)); border-bottom-color: var(--zone, var(--accent)); }
 /* ══════════════════════════════════════════════════════════
    暗物质相变环
    ══════════════════════════════════════════════════════════

@@ -14,7 +14,7 @@
 import { BASE, DE_MILESTONES } from "./config.js";
 import {
   advance, breakInfinity, buyDeUpgrade, buyDreamUpgrade, buyInfinityUpgrade, buyRepeatable,
-  buyTrap, buyVoidUpgrade, doBigCrunch, doClick, tick,
+  buyAccel, buyCoinage, buyTrap, buyVoidUpgrade, buyZpeEngineLevel, doBigCrunch, doClick, tick, unlockZpeEngine,
 } from "./engine.js";
 import { clear as clearSave, load, save } from "./save.js";
 import { newState, pushLog } from "./state.js";
@@ -118,6 +118,34 @@ const handlers = {
   /** @param {string} id 无限升级 id（∞ 层，用无限点购买） */
   onBuyInfinity(id) {
     if (buyInfinityUpgrade(state, id).ok) {
+      save(state);
+      afterAction();
+    }
+  },
+  /** 坍缩加速器：买等级（max = 买满；受效果硬上限约束） */
+  onBuyAccel(max) {
+    if (buyAccel(state, max) > 0) {
+      save(state);
+      afterAction();
+    }
+  },
+  /** 无限铸币：买等级（max = 买满；受档位闸门约束） */
+  onBuyCoinage(max) {
+    if (buyCoinage(state, max) > 0) {
+      save(state);
+      afterAction();
+    }
+  },
+  /** ZPE 引擎：解锁（10 无限点） */
+  onUnlockZpeEngine() {
+    if (unlockZpeEngine(state)) {
+      save(state);
+      afterAction();
+    }
+  },
+  /** ZPE 引擎：买等级（max = 买满） */
+  onBuyZpeEngine(max) {
+    if (buyZpeEngineLevel(state, max) > 0) {
       save(state);
       afterAction();
     }

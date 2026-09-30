@@ -136,6 +136,479 @@ export const BASE = {
 export const ZPE_EXPONENT = 0.02;
 
 // ══════════════════════════════════════════════════════════
+// ZPE 引擎（打破无限后 · 虚空系统子页）
+// ══════════════════════════════════════════════════════════
+
+/**
+ * ZPE 引擎：拿**无限点**买等级，等级同时喂三条机制。
+ *
+ * 设计推导见 [`docs/ZPE-ENGINE.md`](../../docs/ZPE-ENGINE.md)。三条机制各自改方程的哪一项：
+ *   ① 抬 `ZPE_EXPONENT`（= 抬自反馈指数 a，改**形状**）—— 等级 10 解锁，每级 +0.002，封顶 +0.03
+ *   ② `zpeRate × (1 + perLevel×等级)²`（= 抬常数速率，改**快慢**）—— 解锁即有
+ *   ③ `zpeMultiplier ×= 计数频率项`（= 把已有成长接进来）—— 等级 5 解锁
+ *
+ * ⚠️ **唯一红线**：`a = (ZPE_EXPONENT + ① 的加成) × (倍率在产出里出现的次数 ≈ 1.74~2) < 1`。
+ *    封顶时 a = 0.05 × 2 = 0.10，离红线很远（`tools/zpe-engine-lab.mjs --check` 会断言）。
+ *
+ * 为什么等级用无限点买（而不是 ZPE）：IP 的长期曲线是**线性**的（60 × 3^① 点/小时），
+ * 于是等级 ∝ 时间 ⇒ `(1+kv)²` ∝ t² ⇒ **ZPE ∝ t³**，是一条"越来越快"的形状；
+ * 而且**不碰 a**（a 只看 ZPE 的幂次）。用 ZPE 买的话等级 ∝ log(ZPE)，只给多项式提速。
+ */
+export const ZPE_ENGINE = {
+  /** 解锁价（用户指定：10 无限点） */
+  unlockCostIp: 10,
+  /** 第一级价格 */
+  baseCostIp: 5,
+  /**
+   * ★ **极强软上限**（用户指定）：等级越高，每级涨价倍率按段跳。
+   *
+   *   | 等级区间 | 每级涨价倍率 | 说明 |
+   *   |---|---|---|
+   *   | 0 ~ 10    | ×2           | 正常段 |
+   *   | > 10      | ×2 **再 ×10** = ×20 | 「大于 10 引擎价格增长 ×10」 |
+   *   | > 100     | 再 **^1.3** = ×49.1 | 「大于 100 再多 ^1.3」 |
+   *   | > 1000    | 再 **^1.8** = ×218.6 | 「大于 1000 再多 ^1.8」 |
+   *
+   *   为什么要它：模型（`tools/ip-economy-lab.mjs`）证明「只要等级能用 IP 批量买入，
+   *   300 阶会在几分钟内冲完」。所以引擎等级必须**在数值上就贵到不可批量**，
+   *   而不是靠"少给点效果"来节流 —— 这就是软上限的作用。
+   *
+   *   ⚠️ 每段都是一次**乘性跳变**，所以实测曲线是：10 级前很便宜（5→5120 点），
+   *      11 级起每级贵一个量级，20 级就已经是 `5×2^10×20^10 ≈ 5e16` 点。
+   *      想调就改这里的 `growth`（工具里 `--cost` 会打印价格表）。
+   */
+  costSegments: [
+    { from: 0, growth: 2 },
+    { from: 10, growth: 2 * 10 },
+    { from: 100, growth: Math.pow(2 * 10, 1.3) },
+    { from: 1000, growth: Math.pow(2 * 10, 1.8) },
+  ],
+  /** ② 每级给 `(1 + perLevel×等级)²` 的产出倍率 */
+  perLevel: 0.1,
+  /** ③ 从这一级起，ZPE 倍率开始吃「计数频率」 */
+  countFreqLevel: 5,
+  /** ① 从这一级起，每级给倍率公式 +expPerLevel 的指数 */
+  expLevel: 10,
+  expPerLevel: 0.002,
+  /** ① 的指数加成上限（安全线：0.05 × 2 = 0.10 ≪ 1） */
+  expMax: 0.03,
+};
+
+/**
+ * ★ 无限铸币（**设计未冻结：用户保留最终修改权**）
+ *
+ * 用户批注：「铸币系统一看就很影响设计，虽然强力。我的建议是保留对这一设计的最终修改权。」
+ *
+ * ── 它是什么 ──
+ *   可重复升级，花**无限点**买，效果是把**所有无限点收入**乘以 `m^等级`。
+ *   价格也是等比：`baseCostIp × r^等级`。于是
+ *       p = log(m)/log(r)
+ *   `p < 1` 收敛（追不上）、`p = 1` 每小时固定阶数、`p > 1` 超临界（有限时间奇点）。
+ *   本项目取 `p = 1.32 > 1`：**先慢后冲**，这是唯一能在几十小时内跨 306 阶的形态。
+ *
+ * ── 为什么必须有"档位闸门"（关键，模型实测的教训）──
+ *   只要某个循环能用无限点**批量买入**，池子一大它就会瞬间买几百级、当场放大收入。
+ *   所以铸币等级**硬性**受 `capPerCrunch × 大坍缩次数` 限制：
+ *   每次大坍缩才放行一批，节奏就由"每次大坍缩要多久"决定（见 `docs/IP-ECONOMY.md`）。
+ *
+ *   ⚠️ 闸门**不许**和别的循环用加法耦合。模型里曾经把上限写成
+ *      `引擎等级 + 档位×增量`，结果引擎等级一跑飞就把闸门整体顶开（12/22/32 拟合结果一模一样）。
+ *
+ * ── 拟合结果（`tools/ip-economy-lab.mjs`）──
+ *   `capPerCrunch = 30` + ① 每档 +2 级 → 实测 **24.0 小时 / 24 档**，每档兑现 **12.73 阶**
+ *   （设计值 `306 ÷ 24 = 12.75`）。
+ */
+export const COINAGE = {
+  /** 第 1 级价格（无限点） */
+  baseCostIp: 1e4,
+  /** 每级涨价倍率 */
+  growth: 2,
+  /** 每级让无限点收入 ×这个数（m） */
+  effectPerLevel: 2.5,
+  /** ★ 档位闸门：每次大坍缩放行几级 */
+  capPerCrunch: 30,
+  /**
+   * ★ 价格的**极强软上限**（用户指定：「若会影响永恒阶段务必加入极强的软上限」）。
+   *
+   * 作用范围刻意选在**设计需求之外**：铸币本体被档位闸门卡住（24 档 × 30 = 720 级），
+   * 所以软上限从第 900 级才开始咬 —— 它只负责"永远别想无限买"，
+   * 不干扰 24 小时档的正常推进。
+   */
+  costSegments: [
+    { from: 0, growth: 2 },
+    { from: 900, growth: 2 * 10 },
+    { from: 1200, growth: Math.pow(2 * 10, 1.5) },
+  ],
+};
+
+/**
+ * ★ 无限增幅（①，`INFINITY_UPGRADES.ipDouble`）的价格**软上限**。
+ *
+ * 用户指定：「若会影响永恒阶段务必加入极强的软上限」。
+ * ① 的效果是 `收入 ×3^等级`、价格 `10^等级` —— 单独看是**收敛**的（`p = 0.477`），
+ * 但池子一大就能**批量买几百级**：模型实测 `A ≈ log10(池子/9)`，
+ * 于是「池子变大 → 一次买光 → 收入 ×3^A」形成池驱动的爆走。
+ *
+ * 拟合需要的量级是 **A ≈ 50**（24 档 × 每档 +2 级），所以软上限从第 60 级起咬：
+ * 60 级前完全不干扰设计，之后每级涨价 ×100、再 ^1.5 —— 1e308 点也只能买到 60 多级。
+ */
+export const IP_DOUBLE_SOFT_CAP = [
+  { from: 0, growth: 10 },
+  { from: 60, growth: 10 * 10 },
+  { from: 90, growth: Math.pow(10 * 10, 1.5) },
+];
+
+/**
+ * 「量子铸币」的实际收益：`floor(本次无限最大量子数²)`。
+ * 没买这条就是 0（所以它是"买断才有"的一次性收益）。
+ */
+export function quantumToIPGain(state) {
+  if (!state.infinityFromQuantumBought) return new Decimal(0);
+  const q = state.peakQuantumRun ?? 0;
+  const n = q instanceof Decimal ? q : new Decimal(q);
+  return n.mul(n).floor();
+}
+
+/** ① 的**下一级价格**（log10，分段闭式） */
+export function ipDoubleLogCost(level) {
+  const n = Math.max(0, Number(level) || 0);
+  let lg = Math.log10(INFINITY_UPGRADES.ipDouble.firstCost);
+  for (let i = 0; i < IP_DOUBLE_SOFT_CAP.length; i++) {
+    const from = IP_DOUBLE_SOFT_CAP[i].from;
+    const to = i + 1 < IP_DOUBLE_SOFT_CAP.length ? IP_DOUBLE_SOFT_CAP[i + 1].from : Infinity;
+    if (n <= from) break;
+    const cnt = Math.min(n, to) - from;
+    if (cnt > 0) lg += cnt * Math.log10(IP_DOUBLE_SOFT_CAP[i].growth);
+  }
+  return lg;
+}
+
+/** ① 的等级上限探针：给定无限点池能买到几级（分段闭式，O(段数)） */
+export function ipDoubleAffordableIn(level, poolDecimal) {
+  let lv = Math.max(0, Number(level) || 0);
+  let pool = poolDecimal;
+  let total = 0;
+  const segs = IP_DOUBLE_SOFT_CAP;
+  for (let i = 0; i < segs.length; i++) {
+    const from = segs[i].from;
+    const to = i + 1 < segs.length ? segs[i + 1].from : Infinity;
+    if (lv >= to) continue;
+    const g = segs[i].growth;
+    const start = Math.max(lv, from);
+    const first = new Decimal(10).pow(ipDoubleLogCost(start));
+    if (pool.lt(first)) break;
+    const k = pool.mul(g - 1).div(first).add(1).log(g).floor().toNumber();
+    if (!Number.isFinite(k) || k <= 0) break;
+    const segLen = to === Infinity ? k : to - start;
+    const span = Math.min(k, segLen);
+    pool = pool.sub(first.mul(new Decimal(g).pow(span).sub(1)).div(g - 1));
+    total += span;
+    lv = start + span;
+    if (span < segLen) break;
+  }
+  return total;
+}
+
+/** 铸币等级上限（**档位闸门**：大坍缩次数 × 每档放行级数） */
+export function coinageCap(state) {
+  const crunches = state.bigCrunchCount ?? 0;
+  const n = crunches instanceof Decimal ? crunches.toNumber() : Number(crunches) || 0;
+  // ★ 每档上限随**档位里程碑**爬升（这就是"档数压缩"的实现方式）
+  return Math.floor(n * coinageCapPerCrunch(state));
+}
+
+/** 铸币等级 */
+export function coinageLevel(state) {
+  const lv = state.coinageLevel ?? 0;
+  return lv instanceof Decimal ? lv : new Decimal(lv);
+}
+
+/** 铸币对**所有无限点收入**的倍率：`m^等级` */
+export function coinageMult(state) {
+  return new Decimal(COINAGE.effectPerLevel).pow(coinageLevel(state));
+}
+
+/** 铸币第 N 级的价格（log10，分段软上限） */
+export function coinageLogCost(level) {
+  const n = Math.max(0, Number(level) || 0);
+  let lg = Math.log10(COINAGE.baseCostIp);
+  for (let i = 0; i < COINAGE.costSegments.length; i++) {
+    const from = COINAGE.costSegments[i].from;
+    const to = i + 1 < COINAGE.costSegments.length ? COINAGE.costSegments[i + 1].from : Infinity;
+    if (n <= from) break;
+    const cnt = Math.min(n, to) - from;
+    if (cnt > 0) lg += cnt * Math.log10(COINAGE.costSegments[i].growth);
+  }
+  return lg;
+}
+
+/** 铸币下一级价格 */
+export function coinageCost(state) {
+  return new Decimal(10).pow(coinageLogCost(coinageLevel(state).toNumber()));
+}
+
+/**
+ * 铸币能买几级（**同时受档位闸门与软上限约束**）。
+ * 闸门优先：`min(闸门剩余, 池子买得起的级数)`。
+ */
+export function coinageAffordableIn(state, poolDecimal) {
+  const lv = coinageLevel(state).toNumber();
+  const room = coinageCap(state) - lv;
+  if (room <= 0) return 0;
+  let pool = poolDecimal;
+  let total = 0;
+  let cur = lv;
+  const segs = COINAGE.costSegments;
+  for (let i = 0; i < segs.length; i++) {
+    const from = segs[i].from;
+    const to = i + 1 < segs.length ? segs[i + 1].from : Infinity;
+    if (cur >= to) continue;
+    const g = segs[i].growth;
+    const start = Math.max(cur, from);
+    const first = new Decimal(10).pow(coinageLogCost(start));
+    if (pool.lt(first)) break;
+    const k = pool.mul(g - 1).div(first).add(1).log(g).floor().toNumber();
+    if (!Number.isFinite(k) || k <= 0) break;
+    const segLen = to === Infinity ? k : to - start;
+    const span = Math.min(k, segLen, room - total);
+    if (span <= 0) break;
+    pool = pool.sub(first.mul(new Decimal(g).pow(span).sub(1)).div(g - 1));
+    total += span;
+    cur = start + span;
+    if (span < segLen || total >= room) break;
+  }
+  return total;
+}
+
+/** 铸币总价（从 from 买到 to，Decimal） */
+export function coinageTotalCost(from, to) {
+  let total = new Decimal(0);
+  const segs = COINAGE.costSegments;
+  for (let i = 0; i < segs.length; i++) {
+    const segFrom = segs[i].from;
+    const segTo = i + 1 < segs.length ? segs[i + 1].from : Infinity;
+    const lo = Math.max(from, segFrom);
+    const hi = Math.min(to, segTo);
+    if (hi <= lo) continue;
+    const g = segs[i].growth;
+    const first = new Decimal(10).pow(coinageLogCost(lo));
+    total = total.add(first.mul(new Decimal(g).pow(hi - lo).sub(1)).div(g - 1));
+  }
+  return total;
+}
+
+/**
+ * ★ 档位里程碑（挂在**大坍缩次数**上）
+ *
+ * 设计意图（用户定的 24h → 18h）：
+ *   总时长 = 档数 × 每次大坍缩耗时，而**每档兑现的阶数由 `capPerCrunch` 决定**。
+ *   所以"档数压缩"不是把档数直接改小，而是**让每档上限随进度爬升**：
+ *   30 → 33 → 36 → 41 → 46 ⇒ 同样的 306 阶需要的档数变少 ⇒ 阶梯自然压缩到 ~18 档。
+ *
+ * 另外两条：
+ *   · `rate` —— 成长速率里程碑（每次大坍缩更快，与「速率解放」「坍缩加速器」共用一个入口）；
+ *   · `lube` —— **量子润滑（保守版）**：把量子门槛步长从 ×20 缓到 ×19.5。
+ *     判据：`tools/crunch-speed-lab.mjs` 的 ⑦ 行显示"量子不足"惩罚很重（36.9h），
+ *     所以先给一点点缓和；若实测仍然严重，再按用户说的"回到原方案"（给更多）。
+ */
+export const TIER_MILESTONES = [
+  { at: 3, id: "tm-cap1", kind: "cap", value: 3, desc: "铸币每档上限 +3（30 → 33）" },
+  { at: 6, id: "tm-rate1", kind: "rate", value: 1.05, desc: "成长速率 ×1.05" },
+  { at: 9, id: "tm-cap2", kind: "cap", value: 3, desc: "铸币每档上限 +3（→ 36）" },
+  { at: 12, id: "tm-lube", kind: "lube", value: 0.5, desc: "量子润滑：门槛步长 ×20 → ×19.5" },
+  { at: 15, id: "tm-rate2", kind: "rate", value: 1.05, desc: "成长速率 ×1.05（累计 ×1.1025）" },
+  { at: 18, id: "tm-cap3", kind: "cap", value: 5, desc: "铸币每档上限 +5（→ 41）" },
+  { at: 24, id: "tm-cap4", kind: "cap", value: 5, desc: "收尾：铸币每档上限 +5（→ 46）" },
+];
+
+/** 已解锁的档位里程碑（大坍缩次数 ≥ at） */
+export function tierMilestonesDone(state) {
+  const n = state.bigCrunchCount instanceof Decimal ? state.bigCrunchCount.toNumber() : Number(state.bigCrunchCount) || 0;
+  return TIER_MILESTONES.filter((m) => n >= m.at);
+}
+
+/** 铸币**每档上限**（基础 30 + 里程碑累加）—— 档数压缩就是靠它 */
+export function coinageCapPerCrunch(state) {
+  let cap = COINAGE.capPerCrunch;
+  for (const m of tierMilestonesDone(state)) if (m.kind === "cap") cap += m.value;
+  return cap;
+}
+
+/** 档位里程碑给的成长速率倍率（并入 infinityRateMult，保持单一入口） */
+export function tierRateMult(state) {
+  let m = 1;
+  for (const x of tierMilestonesDone(state)) if (x.kind === "rate") m *= x.value;
+  return m;
+}
+
+/** 档位里程碑给的"量子润滑"：门槛步长的额外倍率（1 = 无缓和） */
+export function tierQuantumStepMult(state) {
+  let k = 1;
+  for (const m of tierMilestonesDone(state)) if (m.kind === "lube") k *= 1 - m.value / QUANTUM.zpeCostGrowth / 2;
+  return k;
+}
+
+/**
+ * ★ 永恒层（先占位：只有门槛与永恒点公式，内容待设计）
+ *
+ * 永恒点公式**照 AD 抄**（`src/core/secret-formula/multiplier-tab/eternity-points.js`）：
+ *
+ *   AD: `DC.D5.pow( log10(maxIP) / (308 − Pelle) − 0.7 )`
+ *   即  **永恒点 = floor( 5^(log10(IP)/308 − 0.7) )**
+ *
+ * 代入门槛验算：`5^(308.25/308 − 0.7) = 5^0.3008 = 1.62` → floor = **1 点** ✓
+ * （AD 第一次永恒也正好给 1 点，手感一致。）
+ *
+ * ⚠️ 两条与物质层**刻意不同**的地方（用户指定）：
+ *   1. 永恒点只由 **无限点**决定，与物质深度无关；
+ *   2. **没有**「到 1e308.25 强制坍缩」那种硬顶机制 —— 永恒是**手动**触发的，
+ *      到了门槛不会自己重置（强制坍缩只存在于物质层）。
+ */
+export const ETERNITY = {
+  /** 门槛：与物质上限同一个数字（AD 的 eternityGoal 也是 1.79e308 ≈ 这个值） */
+  goalLog10: Math.log10(Number.MAX_VALUE),
+  /** 底数 5 */
+  base: 5,
+  /** 公式除数 308（AD 用整数 308，不是 308.25） */
+  divisor: 308,
+  /** 指数偏移 0.7 */
+  offset: 0.7,
+};
+
+/**
+ * 本次永恒能拿多少永恒点（纯函数，UI 与断言共用）。
+ *
+ * @param {Decimal} infinityPoints
+ * @returns {Decimal} 不到门槛就是 0
+ */
+export function eternityPointGain(infinityPoints) {
+  if (infinityPoints.lt(new Decimal(10).pow(ETERNITY.goalLog10))) return new Decimal(0);
+  const ep = new Decimal(ETERNITY.base).pow(
+    infinityPoints.log10().div(ETERNITY.divisor).sub(ETERNITY.offset),
+  ).floor();
+  return ep.lt(1) ? new Decimal(1) : ep;   // 门槛处正好 1 点，兜底防止浮点掉到 0
+}
+
+/**
+ * 引擎价格的 **log10**（分段几何，闭式）。
+ *
+ * 分段的意义：每段内是等比数列，段与段之间是**乘性跳变**，所以整体仍是闭式 ——
+ * 「买满」不需要逐级循环。
+ */
+export function zpeEngineLogCost(level) {
+  const n = Math.max(0, Number(level) || 0);
+  let lg = Math.log10(ZPE_ENGINE.baseCostIp);
+  const segs = ZPE_ENGINE.costSegments;
+  for (let i = 0; i < segs.length; i++) {
+    const from = segs[i].from;
+    const to = i + 1 < segs.length ? segs[i + 1].from : Infinity;
+    if (n <= from) break;
+    const cnt = Math.min(n, to) - from;
+    if (cnt > 0) lg += cnt * Math.log10(segs[i].growth);
+  }
+  return lg;
+}
+
+/** ZPE 引擎是否已解锁 */
+export function zpeEngineUnlocked(state) {
+  return state.zpeEngineUnlocked === true;
+}
+
+/** 引擎等级（没解锁就是 0） */
+export function zpeEngineLevel(state) {
+  const lv = state.zpeEngineLevel ?? 0;
+  return lv instanceof Decimal ? lv : new Decimal(lv);
+}
+
+/** 下一级的价格（无限点）。解锁本身走 unlockCostIp，不算在这里。 */
+export function zpeEngineCost(state) {
+  return new Decimal(10).pow(zpeEngineLogCost(zpeEngineLevel(state).toNumber()));
+}
+
+/**
+ * 从 `from` 买到 `to` 的总价（**Decimal**，分段闭式）。
+ *
+ * ⚠️ 段与段之间是**相加**（同一笔钱买多级），不是相乘 —— 第一版我把每段的和取 log
+ *    再相加，那等于把各段乘起来（价格虚高几个量级）。这里用 Decimal 相加。
+ */
+export function zpeEngineTotalCost(from, to) {
+  let total = new Decimal(0);
+  const segs = ZPE_ENGINE.costSegments;
+  for (let i = 0; i < segs.length; i++) {
+    const segFrom = segs[i].from;
+    const segTo = i + 1 < segs.length ? segs[i + 1].from : Infinity;
+    const lo = Math.max(from, segFrom);
+    const hi = Math.min(to, segTo);
+    if (hi <= lo) continue;
+    const g = segs[i].growth;
+    const cnt = hi - lo;
+    const first = new Decimal(10).pow(zpeEngineLogCost(lo));   // 段内第一级的价格
+    total = total.add(first.mul(new Decimal(g).pow(cnt).sub(1)).div(g - 1));
+  }
+  return total;
+}
+
+/**
+ * 从当前等级起，给定无限点池**最多能买几级**（分段几何的闭式解，O(段数)）。
+ *
+ * 每段内的反解就是标准等比公式：
+ *   `k = floor( log_g( 1 + pool·(g−1)/cost_at_seg_start ) )`
+ * 花了多少也从同一公式算（避免再逐级累加）。
+ */
+export function zpeEngineAffordableIn(state, poolDecimal) {
+  if (!zpeEngineUnlocked(state)) return 0;
+  const segs = ZPE_ENGINE.costSegments;
+  let lv = zpeEngineLevel(state).toNumber();
+  let pool = poolDecimal;
+  let total = 0;
+
+  for (let i = 0; i < segs.length; i++) {
+    const from = segs[i].from;
+    const to = i + 1 < segs.length ? segs[i + 1].from : Infinity;
+    if (lv >= to) continue;                       // 这一段的等级已经买完
+    const g = segs[i].growth;
+    const start = Math.max(lv, from);
+    const first = new Decimal(10).pow(zpeEngineLogCost(start));   // 本段第一级的价格
+    if (pool.lt(first)) break;
+    // k = floor( log_g( pool·(g−1)/first + 1 ) )
+    const k = pool.mul(g - 1).div(first).add(1).log(g).floor().toNumber();
+    if (!Number.isFinite(k) || k <= 0) break;
+    // ⚠️ span 最多到**本段末尾**；判定"钱够不够"要比 segLen，不是比 k ——
+    //    第一版写成 `span < k` 就 break，于是池子再大也只能买满第一段（10 级）。
+    const segLen = to === Infinity ? k : to - start;
+    const span = Math.min(k, segLen);
+    // 本段花掉：first × (g^span − 1)/(g − 1)
+    const spent = first.mul(new Decimal(g).pow(span).sub(1)).div(g - 1);
+    pool = pool.sub(spent);
+    total += span;
+    lv = start + span;
+    if (span < segLen) break;                      // 本段买不满 → 钱不够了，停
+  }
+  return total;
+}
+
+/** ② 引擎对 ZPE 产出的倍率：`(1 + 0.1×等级)²` */
+export function zpeEngineProdMult(state) {
+  if (!zpeEngineUnlocked(state)) return new Decimal(1);
+  const lv = zpeEngineLevel(state);
+  const base = new Decimal(1).add(lv.mul(ZPE_ENGINE.perLevel));
+  return base.mul(base);
+}
+
+/** ① 引擎给 `zpeMultiplier` 公式指数加多少（等级 10 起，封顶 expMax） */
+export function zpeEngineExpBonus(state) {
+  if (!zpeEngineUnlocked(state)) return 0;
+  const lv = zpeEngineLevel(state).toNumber();
+  if (lv < ZPE_ENGINE.expLevel) return 0;
+  return Math.min((lv - ZPE_ENGINE.expLevel + 1) * ZPE_ENGINE.expPerLevel, ZPE_ENGINE.expMax);
+}
+
+/** ③ 是否已解锁（等级 ≥ countFreqLevel） */
+export function zpeEngineCountFreqUnlocked(state) {
+  return zpeEngineUnlocked(state) && zpeEngineLevel(state).toNumber() >= ZPE_ENGINE.countFreqLevel;
+}
+
+// ══════════════════════════════════════════════════════════
 // 三条可重复升级
 // ══════════════════════════════════════════════════════════
 
@@ -287,8 +760,17 @@ export const VOID_UPGRADES = {
   v9: {
     id: "v9",
     name: "传承启迪",
-    // 实际消耗 1 梦想点
+    // 消耗 1 梦想点 + **门槛** 1e8 ZPE（见下方 requireZpe）
     costDream: 1,
+    /**
+     * ⚠️ **门槛**（不是价格）：ZPE 到 1e8 才允许购买。
+     *
+     * 原稿就是这么写的（`legacy/index.html` 的 `void-cost-v9`：「1 梦想点 + 1e8 ZPE」）。
+     * 用户明确「v9 不改，故意设计的」⇒ `cost` 仍是 `"0"`（**不扣** ZPE），
+     * 只保留"到 1e8 才解锁"这条门槛；加它的唯一目的是不让它开局 4 秒被买走
+     * （实测它曾把 ZPE 在 7 分钟内推到 1e15，让 `tools/stage-timing.mjs` 的时长读数失真）。
+     */
+    requireZpe: 1e8,
     cost: "0",
     desc: "所有里程碑效果翻倍；熵凝聚/升级价格/熵阱价格的折扣改为「达到阈值自动获取」（不再扣钱）",
     rewardDream: false,
@@ -921,6 +1403,13 @@ export const ZONE_OF = {
   //   起点跃迁改的是物质存量起点，速率解放改的是量子成长速率上限）
   ipDouble: "ip",
   ipTime: "ip",
+  // ★ 量子铸币：**落点是无限点**（它的输入是量子，但加成的落点在 ∞ 层）——
+  //   按项目规矩「只看加成位置而不看职责位置」⇒ 登记为 `ip`，不是 `quantum`。
+  ipFromQuantum: "ip",
+  //   ⚠️ 量子相关的东西用 `dm` 这一格（ZONES 里没有 `quantum` 键；量子页的红色就是它）
+  thresholdFlat: "dm",
+  pairBoost: "dm",
+  unspentBoost: "matter",
   ipToZpe: "zpe",
   ipToTransmuter: "de",
   start50: "matter",
@@ -1118,10 +1607,31 @@ export function quantumGrowthRate(quantum, rateMult = 1) {
  *   ×20  递进 -> 64 对 -> 128 量子   ← 现在
  *   ×100 递进 -> 32 对 ->  64 量子
  */
-export function quantumZpeRequirement(pairs) {
+/** 量子门槛的**总倍率**（单一数据源：档位里程碑的"量子润滑" × 门槛压平升级） */
+export function quantumStepMult(state) {
+  const flat = state.thresholdFlatBought ? 0.5 : 1;   // ×20 → ×10
+  return tierQuantumStepMult(state) * flat;
+}
+
+/** 每次捕获得到几个量子（涨落增幅：2 → 3） */
+export function quantumPerPair(state) {
+  return state.pairBoostBought ? 3 : QUANTUM.perPair;
+}
+
+/** 未花无限点 → a区 产率倍率（AD unspentBonus 同源，**硬封顶**见 unspentBoost.maxMult） */
+export function unspentBoostMult(state) {
+  if (!state.unspentBoostBought) return new Decimal(1);
+  const ip = state.infinityPoints ?? 0;
+  const n = ip instanceof Decimal ? ip : new Decimal(ip);
+  const m = new Decimal(1).add(n.div(2).pow(1.5));
+  const cap = new Decimal(INFINITY_UPGRADES.unspentBoost.maxMult ?? 1e3);
+  return m.gt(cap) ? cap : m;
+}
+
+export function quantumZpeRequirement(pairs, lubeMult = 1) {
   const n = pairs instanceof Decimal ? pairs : new Decimal(pairs ?? 0);
-  // 用户设定的「再 ×2」并进底数：10 × 2 = 20
-  const step = new Decimal(QUANTUM.zpeCostGrowth).mul(QUANTUM.zpeCostExtraNerf ?? 1);
+  // 用户设定的「再 ×2」并进底数：10 × 2 = 20；lubeMult 是「量子润滑」的缓和倍率
+  const step = new Decimal(QUANTUM.zpeCostGrowth).mul(QUANTUM.zpeCostExtraNerf ?? 1).mul(lubeMult);
   return new Decimal(QUANTUM.zpeBaseCost).mul(Decimal.pow(step, n));
 }
 
@@ -1313,6 +1823,57 @@ export const INFINITY_UPGRADES = {
   },
 
   /** ② 无限点数量 → ZPE 倍率的**加法区**（a区） */
+  /**
+   * ★ 量子铸币（用户提案）：**单次 100 无限点**，之后每次大坍缩额外获得
+   *   `floor(本次无限最大量子数 ^ 2)` 点无限点。
+   *
+   * 为什么需要它（诊断依据，`tools/stage-timing.mjs --profile`）：
+   *   打破无限后 ④ 收入只有 540~1620 点/小时，而铸币起步价 1e4 ⇒ **24 小时买不到一级铸币**，
+   *   阶梯的"种子"根本攒不出来。这一条把「ZPE → 量子 → 无限点」接通，
+   *   正好补上种子（实测 q≈83 时给 6889 点 ≈ 起步价量级）。
+   *
+   * 安全性：q 的成长受量子门槛（每次 ×20）限制，`q ≈ 2·log20(ZPE)` ——
+   *   所以 q² 只随 log²(ZPE) 增长，**是种子而不是 runaway**（q=138 时也才 1.9e4）。
+   */
+  /** 门槛压平：量子门槛步长 ×20 → ×10（原稿候选 11；现在能放大 q² 收益） */
+  thresholdFlat: {
+    id: "thresholdFlat",
+    name: "门槛压平",
+    cost: 50,
+    desc: "量子门槛步长 ×20 → ×10",
+    zone: "dm",
+  },
+  /** 涨落增幅：每对量子 +2 → +3（原稿候选 10） */
+  pairBoost: {
+    id: "pairBoost",
+    name: "涨落增幅",
+    cost: 5,
+    desc: "每对量子 2 → 3",
+    zone: "dm",
+  },
+  /**
+   * 未花 IP 加产率（原稿候选 15，AD `unspentBonus` 同源）：a区 产率按**未花无限点**提升。
+   *
+   * ⚠️ **必须有硬上限**（用户指定：影响永恒阶段的东西要有极强软上限）。
+   *    AD 原式 `(IP/2)^1.5 + 1` 单独看很危险：IP 到 1e308 时它是 1e462，
+   *    物质爬升会被瞬间抹平（整条 24h 阶梯失去意义）。所以这里**封顶 ×1000**：
+   *    它只在"攒铸币种子"的那几个小时里起作用，之后恒定 —— 定位是**种子**，不是 runaway。
+   */
+  unspentBoost: {
+    id: "unspentBoost",
+    name: "沉潜蓄能",
+    cost: 5,
+    desc: "a区产率 按未花无限点 ×(1+(IP/2)^1.5)，封顶 ×1000",
+    zone: "matter",
+    maxMult: 1000,
+  },
+  ipFromQuantum: {
+    id: "ipFromQuantum",
+    name: "量子铸币",
+    cost: 100,
+    desc: "大坍缩收益 +本次最大量子数²",
+    zone: "ip",
+  },
   ipToZpe: {
     id: "ipToZpe",
     name: "零点耦合",
@@ -1351,7 +1912,7 @@ export const INFINITY_UPGRADES = {
      */
     capSeconds: 1800,
     zone: "ip",
-    desc: "每次无限额外获得「耗时÷60」点，单次最多计 30 分钟",
+    desc: "每秒实时获得「1 ÷ 60」点（吃 ① 的加成），单次最多计 30 分钟",
   },
 
   // ══════════════════════════════════════════════════════════
@@ -1393,6 +1954,7 @@ export const INFINITY_UPGRADES = {
  * UI 会把它排成 2×n 网格，所以顺序就是格子顺序（左→右、上→下）。
  */
 export const INFINITY_ORDER = [
+  "ipFromQuantum", "thresholdFlat", "pairBoost", "unspentBoost",
   "ipDouble", "ipToZpe",
   "ipToTransmuter", "ipTime",
   "start50", "start100",
@@ -1441,13 +2003,25 @@ export function infinityUpgradeCost(state, id) {
   const cfg = INFINITY_UPGRADES[id];
   if (!cfg) return new Decimal(0);
   if (cfg.repeatable) {
+    // ★ ①「无限增幅」走**分段软上限**（用户指定：影响永恒阶段的东西必须有极强软上限）。
+    //   60 级前与老的 `10^等级` 完全一致；之后每级涨价 ×100、再 ^1.5。
     const lv = state.ipDoubleLevel ?? new Decimal(0);
-    return new Decimal(cfg.firstCost).mul(Decimal.pow(cfg.costMult, lv));
+    return new Decimal(10).pow(ipDoubleLogCost(lv.toNumber()));
   }
   return new Decimal(cfg.cost ?? 0);
 }
 
 /** 该无限升级已经买了吗（可重复的返回等级 > 0） */
+/**
+ * 这条 ∞ 升级**买过没有**。
+ *
+ * ⚠️ 踩过的坑（本轮）：加一次性升级时只写了购买分支的 `state.xxxBought = true`，
+ *    **忘了在这里登记** ⇒ `buyInfinityUpgrade` 的"已买就不再卖"判断失效，
+ *    同一升级会被**无限次重复购买**（每次 5/50/100 IP）。
+ *    实测后果：打破无限后的 IP 池永远停在个位数（钱全被重复购买吃掉），
+ *    "种子"永远攒不出来 —— 整条阶梯因此卡死。
+ *    **规矩：加新升级必须同时改这里**（`tools/coinage-lab.mjs` 有对应断言）。
+ */
 export function infinityUpgradeOwned(state, id) {
   const cfg = INFINITY_UPGRADES[id];
   if (!cfg) return false;
@@ -1457,6 +2031,10 @@ export function infinityUpgradeOwned(state, id) {
   if (id === "ipToZpe") return state.ipToZpeBought === true;
   if (id === "ipToTransmuter") return state.ipToTransmuterBought === true;
   if (id === "ipTime") return state.ipTimeBought === true;
+  if (id === "ipFromQuantum") return state.infinityFromQuantumBought === true;
+  if (id === "thresholdFlat") return state.thresholdFlatBought === true;
+  if (id === "pairBoost") return state.pairBoostBought === true;
+  if (id === "unspentBoost") return state.unspentBoostBought === true;
   return false;
 }
 
@@ -1474,26 +2052,100 @@ export function infinityStartLog10(state) {
 }
 
 /** 「速率解放」对量子成长速率上限的总倍率（各档相乘） */
+/**
+ * ★ 坍缩加速器（可重复，花无限点）—— **直接买时间的那条升级**
+ *
+ * 依据 `tools/crunch-speed-lab.mjs` 的结论：一次大坍缩的耗时
+ *   `t = ∫ dL / (R · climb(L) · overload(L))`
+ * 与成长速率 `R` **严格成反比**（断言钉住"R 提升 k 倍 ⇒ 耗时 ÷k"）。
+ * 所以"让每次大坍缩更快"的正确写法就是**乘 R**，而不是去动爬升形状。
+ *
+ * ⚠️ 它是 IP 侧循环，所以**必须自带上限**（用户指定：影响永恒阶段的东西要有极强软上限）：
+ *    这里用的是**硬上限**（而不是价格软上限）—— 效果最大 ×2（≈ 每次省一半时间），
+ *    因为它的存在意义是"把 24h 档压到 18h"，而不是当第二个 runaway。
+ *    需要 18h 档时：`×1.35`（约 15 级）；满级 ×2 是留给后续内容的余量。
+ */
+export const CRUNCH_ACCEL = {
+  /** 第 1 级价格（无限点） */
+  baseCostIp: 1e3,
+  /** 每级涨价 */
+  costGrowth: 3,
+  /** 每级让成长速率 ×1.02（≈ 每次都快 2%） */
+  perLevel: 0.02,
+  /** ★ 效果硬上限：速率最多 ×2（≈ 耗时最多减半） */
+  maxMult: 2,
+};
+
+/** 坍缩加速器等级（效果封顶后等级也不再涨） */
+export function accelLevel(state) {
+  const lv = state.accelLevel ?? 0;
+  const n = lv instanceof Decimal ? lv.toNumber() : Number(lv) || 0;
+  return Math.min(n, accelMaxLevel());
+}
+
+/** 效果封顶对应的等级：`1.02^N = 2` */
+export function accelMaxLevel() {
+  return Math.ceil(Math.log(CRUNCH_ACCEL.maxMult) / Math.log(1 + CRUNCH_ACCEL.perLevel));
+}
+
+/** 加速器对**成长速率**的倍率（1 ~ maxMult） */
+export function accelMult(state) {
+  return Math.min(Math.pow(1 + CRUNCH_ACCEL.perLevel, accelLevel(state)), CRUNCH_ACCEL.maxMult);
+}
+
+/** 下一级价格 */
+export function accelCost(state) {
+  return new Decimal(CRUNCH_ACCEL.baseCostIp).mul(Decimal.pow(CRUNCH_ACCEL.costGrowth, accelLevel(state)));
+}
+
+/**
+ * 无限升级「速率解放」（`rateMult`）的**合并倍率** = ∞ 层已买的档位 × 坍缩加速器。
+ *
+ * ★ 单一数据源：`quantumGrowthRate(量子, infinityRateMult(state))` 是唯一的入口，
+ *   所以任何"改成长速率"的机制都必须并进这里，不许各写各的（否则会漏乘）。
+ */
 export function infinityRateMult(state) {
   let m = new Decimal(1);
   for (const cfg of Object.values(INFINITY_UPGRADES)) {
     if (cfg.rateMult == null) continue;
     if ((state.speedBought ?? {})[cfg.id] === true) m = m.mul(cfg.rateMult);
   }
-  return m;
+  return m.mul(accelMult(state)).mul(tierRateMult(state));
 }
 
 /**
- * ④「无限长河」的一次性结算：把本次无限的耗时换成无限点。
+ * ④「无限长河」的**实时**产点速率（点/秒）。
  *
- * ⚠️ 收益要同时吃 ① 的 ×3^等级 —— 用户明确要求（"能吃到无限升级1的加成"）。
- *    `capSeconds` 为 null 时不设上限（当前设定）。
- *    返回的是**这次多给的点数**（供日志/自检用）。
+ * 设计参考：AD 的同类升级（`ipGen` / 被动产点）是**实时生成**的，不是每次结算时一次性给。
+ * 所以这里也改成实时：`tick` 每帧按这个速率进账，**总量公式不变**
+ * （单次无限累计 = `min(耗时, 上限) ÷ 60 × 3^①等级`）。
+ *
+ * 好处：挂机期间点就在账上（不必等大坍缩才入账），
+ * 而且"把单次压进 30 分钟"这个目标从"结算时才算"变成屏幕上的实时数字。
+ */
+export function timeIPPerSecond(state) {
+  if (!state.ipTimeBought) return new Decimal(0);
+  // ★ 同样吃铸币倍率（④「无限长河」也是无限点收入）
+  return Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0)
+    .mul(coinageMult(state))
+    .div(INFINITY_UPGRADES.ipTime.secondsPerPoint);
+}
+
+/** ④ 单次无限的**可计时长上限**（秒）：超出部分不产点 —— 它是给"速度"定的靶子 */
+export function timeIPCapSeconds() {
+  return INFINITY_UPGRADES.ipTime.capSeconds ?? Infinity;
+}
+
+/**
+ * ④ 单次无限（按耗时）**应得的总量** —— 实时进账的就是这个总量，只是拆成每帧发。
+ *
+ * ⚠️ 保留它是为了让工具/断言能直接验"总量"。**大坍缩不再调用它**
+ *    （那时耗时部分早已实时发完，再发一次就是重复发放）。
  */
 export function timeInfinityPointGain(state, seconds) {
   if (!state.ipTimeBought) return new Decimal(0);
-  const cap = INFINITY_UPGRADES.ipTime.capSeconds;
-  const counted = cap == null ? seconds : Math.min(seconds, cap);
-  const base = new Decimal(counted).div(INFINITY_UPGRADES.ipTime.secondsPerPoint);
-  return base.mul(Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0));
+  const cap = timeIPCapSeconds();
+  const counted = cap === Infinity ? seconds : Math.min(seconds, cap);
+  return new Decimal(counted).div(INFINITY_UPGRADES.ipTime.secondsPerPoint)
+    .mul(Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0));
 }

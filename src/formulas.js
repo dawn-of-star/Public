@@ -16,6 +16,7 @@ import {
   VOID_UPGRADES, ZPE_EXPONENT, ZPE_MILESTONES, crunchThreshold,
   infinityPointGain, quantumDeGainBonus, quantumDeMultBonus,
   quantumEntropyMultiplier, quantumGrowthRate, dreamUpgradeEffects,
+  zpeEngineCountFreqUnlocked, zpeEngineExpBonus, zpeEngineProdMult, coinageMult, quantumToIPGain, unspentBoostMult,
 } from "./config.js";
 import { deLevelOf, hasDe, hasV9, hasVoid, hasZpe, levelOf } from "./state.js";
 
@@ -171,9 +172,21 @@ export function canBigCrunch(state) {
   return collapseUnlocked(state) && state.resources.matter.gte(crunchThreshold());
 }
 
-/** 大坍缩能拿多少无限点（未打破时固定，打破后随深度增长） */
+/**
+ * 大坍缩能拿多少无限点（**唯一数据源**：界面显示与引擎实际发点都必须走这里）。
+ *
+ * ⚠️ 踩过的坑：`doBigCrunch` 曾经自己算 `infinityPointGain × 3^①`，**没走这个函数** ——
+ *    于是"显示"与"实发"会脱节（我加铸币倍率后立刻发生：界面乘了铸币、引擎没乘）。
+ *    现在引擎直接 `const ip = bigCrunchGain(state)`，并由
+ *    `tools/coinage-lab.mjs` 的断言守着"显示 == 实际"。
+ */
 export function bigCrunchGain(state) {
-  return infinityPointGain(state.resources.matter, state.brokenInfinity);
+  const ipMult = Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0);
+  // ① 的加成（3^等级） → 铸币倍率 → 量子铸币的额外点数
+  return infinityPointGain(state.resources.matter, state.brokenInfinity)
+    .mul(ipMult)
+    .mul(coinageMult(state))
+    .add(quantumToIPGain(state));
 }
 
 // ══════════════════════════════════════════════════════════
@@ -184,13 +197,22 @@ export function bigCrunchGain(state) {
  * ZPE 倍率。
  *
  * 原稿：`1 + 0.1 × log10(ZPE+1)` —— 太弱（ZPE 从 1e10 到 1e100，倍率只从 ×2 到 ×11）
- * 现在：`(ZPE+1)^0.05` —— 同区间 ×3.16 → ×1e5
+ * 现在：`(ZPE+1)^ZPE_EXPONENT`，其中 `ZPE_EXPONENT = 0.02`（**别写成 0.05，那是候选值**）。
+ *     `1e10 → ×1.58`、`1e30 → ×3.98`、`1e100 → ×100`。
+ *     0.02 是**刻意贴近原稿**的：在 1e30 处与原稿几乎相等，早期还略弱一点。
+ *
+ * ⚠️ 这个指数是**自反馈**的源头：ZPE 越高 → 倍率越高 → 产出越快 → ZPE 更高。
+ *    它（以及它在 `zpeRate` 里被乘了几次）决定 ZPE 随时间是线性还是超线性增长 ——
+ *    见 tools/zpe-engine-lab.mjs 的 `a < 1` 安全线。
  *
  * 用 `ZPE+1` 而不是 `ZPE`，是为了 ZPE=0 时得到 1 而不是 0。
  */
 export function zpeMultiplier(state) {
   const z = state.zpe.gt(0) ? state.zpe : D(0);
-  let m = z.add(1).pow(ZPE_EXPONENT);
+  // ★ ZPE 引擎 ①：抬高倍率公式的**指数**（改形状，不只是改高度）。
+  //   安全线：`(ZPE_EXPONENT + 加成) × 倍率在产出里出现的次数 < 1`，见 config 的 ZPE_ENGINE。
+  const exp = ZPE_EXPONENT + zpeEngineExpBonus(state);
+  let m = z.add(1).pow(exp);
   if (state.zpeFixedMultiplier) m = m.mul(state.zpeFixedMultiplier);
   if (hasVoid(state, "v8")) m = m.mul(1.5);
   // ★ dm1「ZPE 倍率 ×2」。
@@ -207,6 +229,15 @@ export function zpeMultiplier(state) {
   //   ⚠️ 位置是加法：`m = m + 1×IP`，不是乘。它会被后面引擎那类"最终加成"再乘一遍。
   if (state.ipToZpeBought) {
     m = m.add(D(INFINITY_UPGRADES.ipToZpe.perIp).mul(state.infinityPoints ?? 0));
+  }
+  // ★ ZPE 引擎 ③：让 ZPE 倍率**吃「计数频率」加成**（用户原案第三条）。
+  //
+  //   位置说明（乘区）：落点仍然是 **ZPE 倍率**（蓝色），计数频率是**跨乘区的输入**。
+  //   效果：计数频率对 ZPE 产出的指数从 2.00 → 3.74（因为倍率在产出里出现 ~1.74 次）。
+  //   它安全的原因：计数频率是**仿射**项（1+0.05×等级），随资源只按对数增长，
+  //   所以不会把自反馈指数 a 顶上去（见 docs/ZPE-ENGINE.md 第 4 节）。
+  if (zpeEngineCountFreqUnlocked(state)) {
+    m = m.mul(countFreqAddTerm(state));
   }
   return m;
 }
@@ -391,12 +422,15 @@ export function matterRate(state) {
     zf = D(1).add(zpeMultiplier(state).sub(1).mul(factor));
   }
   const v3 = hasVoid(state, "v3") ? D(1.5) : D(1);
+  // ★ 「未花 IP 加产率」（AD unspentBonus 同源）：**a区** 成员，硬封顶 ×1000（见 config）
+  const ub = unspentBoostMult(state);
   const base = state.resources.particle
     .mul(BASE.matterPerParticle)
     .mul(mb)
     .mul(globalMultiplier(state))
     .mul(zf)
-    .mul(v3);
+    .mul(v3)
+    .mul(ub);
 
   // ★ 量子 → 指数成长项：`dM/dt += R·ln10·M`
   //   与 engine.js 的 tick 里那一整段**逐字对应**（改一处必须改另一处）。
@@ -486,6 +520,10 @@ export function zpeRate(state) {
     .mul(globalMultiplier(state))
     .mul(zpeBaseMultiplier(state))
     .mul(prodMult)
+    // ★ ZPE 引擎 ②：按**引擎等级**大幅提速 ZPE 产出（`(1 + 0.1×等级)²`）。
+    //   等级用无限点买 ⇒ 随时间线性增长 ⇒ 这一项 ∝ t² ⇒ ZPE ∝ t³（越来越快）。
+    //   它只改常数速率 c，不碰自反馈指数 a —— 见 docs/ZPE-ENGINE.md。
+    .mul(zpeEngineProdMult(state))
     .mul(zpeProductionPenalty(state));
 }
 

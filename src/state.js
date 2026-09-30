@@ -90,6 +90,26 @@ export function newState() {
     // ── ∞ 层：无限升级（用无限点买，不随大坍缩重置）──
     /** ① 无限增幅：无限点收益 ×2 的等级 */
     ipDoubleLevel: D(0),
+    /**
+     * ★ 无限铸币等级（**设计未冻结：用户保留最终修改权**）。
+     * 效果：所有无限点收入 ×`COINAGE.effectPerLevel^等级`。
+     * ⚠️ **硬性受档位闸门约束**：`等级 ≤ 30 × 大坍缩次数`（见 `config.coinageCap`）。
+     *    这是"24 小时档"的节流阀 —— 只卡铸币上限而其它 IP 循环不设限是无效的（模型实测）。
+     */
+    coinageLevel: D(0),
+    /** ★ 量子铸币是否已买（一次性，100 IP） */
+    infinityFromQuantumBought: false,
+    /** 三条单次 ∞ 升级（原稿候选）：门槛压平 / 涨落增幅 / 未花 IP 加产率 */
+    thresholdFlatBought: false,
+    pairBoostBought: false,
+    unspentBoostBought: false,
+    /** 本次无限（大坍缩区间）内达到过的**最大量子数** —— 量子铸币的收益基数 */
+    peakQuantumRun: D(0),
+    /**
+     * ★ 坍缩加速器等级（花无限点）：让**成长速率** ×1.02/级，效果硬封顶 ×2。
+     * 一次大坍缩的耗时与成长速率严格成反比 ⇒ 每级约省 2% 时间。
+     */
+    accelLevel: D(0),
     /** ② 零点耦合：无限点 → ZPE 倍率加法区（一次性） */
     ipToZpeBought: false,
     /** ③ 相变超频：无限点 → 相变仪速率（一次性） */
@@ -105,6 +125,28 @@ export function newState() {
      * tick 每帧累加、大坍缩清零 —— 和离线结算同源，不依赖 wall clock。
      */
     infinityElapsed: 0,
+    /**
+     * 本次无限里 ④「无限长河」**实时进账**了多少点（仅供日志/界面显示）。
+     *
+     * ④ 是实时产点的（对齐 AD 的 ipGen），所以"本次拿了多少"不能再由 `infinityElapsed` 反推
+     * —— 中途买了 ① 的话速率会变，反推会算错。
+     * 上限就是那一笔：`min(耗时, 1800) ÷ 60 × 3^①等级`。大坍缩时归零。
+     */
+    ipTimeAccrued: 0,
+    /**
+     * ZPE 引擎（打破无限后 · 虚空系统子页）：解锁价 10 无限点，之后拿无限点买等级。
+     * 三条机制（抬公式指数 / 按等级提速产出 / 让倍率吃计数频率）都由等级驱动，
+     * 见 config 的 `ZPE_ENGINE`。
+     */
+    zpeEngineUnlocked: false,
+    zpeEngineLevel: new Decimal(0),
+    /**
+     * 永恒层（**先占位**）：永恒点与已永恒次数。
+     * 门槛 = 无限点 1e308.25；点公式照 AD（见 config 的 `ETERNITY`）。
+     * ⚠️ 不强制触发 —— 到门槛也不会自动重置（强制坍缩只存在于物质层）。
+     */
+    eternityPoints: new Decimal(0),
+    eternityCount: 0,
 
     // ── 量子（第三版模型：ZPE 门槛捕获）──
     /** 当前量子数量（每捕获一对 +2） */
@@ -213,6 +255,47 @@ export function pushLog(state, text) {
   if (state.log.length > LOG_MAX) state.log.splice(0, state.log.length - LOG_MAX);
 }
 
+/**
+ * 重复购买类升级的**日志关键节点**：`1, 5, 10, 50, 100, 500, 1000, …`
+ * （×5、×2 交替 —— 用户指定"1，5，10，50，100 以此类推"）。
+ *
+ * 为什么需要：自动获取模式下一帧能买几百级，逐级写日志会把面板刷爆
+ * （也让"真正重要的事件"被冲走）。
+ */
+export const KEY_LEVELS = (() => {
+  const out = [1];
+  let v = 1, i = 0;
+  while (v < 1e18) { v *= i++ % 2 === 0 ? 5 : 2; out.push(v); }
+  return out;
+})();
+
+/** 这个等级本身是不是关键节点 */
+export function isKeyLevel(n) {
+  return KEY_LEVELS.includes(n);
+}
+
+/** 从 `from` 买到 `to` 的过程中**跨过的最高关键节点**（没跨过返回 0） */
+export function crossedKeyLevel(from, to) {
+  let hit = 0;
+  for (const k of KEY_LEVELS) if (k > from && k <= to) hit = k;
+  return hit;
+}
+
+/**
+ * 重复购买类升级的等级日志：**只在跨过关键节点时写一条**。
+ *
+ * 统一入口 —— 手动买、自动获取、暗能量升级、无限升级① 全部走这里，
+ * 免得以后有人加新升级时忘了这条规矩（日志策略只在一个地方定义）。
+ *
+ * @returns {boolean} 是否真的写了一条
+ */
+export function pushLevelLog(state, name, from, to) {
+  const hit = crossedKeyLevel(from, to);
+  if (!hit) return false;
+  pushLog(state, `⬆「${name}」→ ${to} 级（跨过 ${hit} 级）`);
+  return true;
+}
+
 // ══════════════════════════════════════════════════════════
 // 序列化（所有 Decimal 转字符串）
 // ══════════════════════════════════════════════════════════
@@ -307,6 +390,13 @@ export function deserialize(raw) {
 
   // ── ∞ 层：无限升级 ──
   s.ipDoubleLevel = dec(raw.ipDoubleLevel);
+  s.coinageLevel = dec(raw.coinageLevel);
+  s.infinityFromQuantumBought = bool(raw.infinityFromQuantumBought);
+  s.thresholdFlatBought = bool(raw.thresholdFlatBought);
+  s.pairBoostBought = bool(raw.pairBoostBought);
+  s.unspentBoostBought = bool(raw.unspentBoostBought);
+  s.peakQuantumRun = dec(raw.peakQuantumRun);
+  s.accelLevel = dec(raw.accelLevel);
   s.ipToZpeBought = bool(raw.ipToZpeBought);
   s.ipToTransmuterBought = bool(raw.ipToTransmuterBought);
   s.ipTimeBought = bool(raw.ipTimeBought);
@@ -317,6 +407,11 @@ export function deserialize(raw) {
     ? Object.fromEntries(Object.entries(raw.speedBought).filter(([, v]) => v === true))
     : {};
   s.infinityElapsed = num(raw.infinityElapsed, 0);
+  s.ipTimeAccrued = num(raw.ipTimeAccrued, 0);
+  s.zpeEngineUnlocked = bool(raw.zpeEngineUnlocked);
+  s.zpeEngineLevel = dec(raw.zpeEngineLevel);
+  s.eternityPoints = dec(raw.eternityPoints);
+  s.eternityCount = num(raw.eternityCount, 0);
 
   // ── 量子 ──
   s.quantum = dec(raw.quantum);

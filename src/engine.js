@@ -21,19 +21,21 @@
 import Decimal from "../dist/break_eternity.esm.js";
 import {
   BASE, BREAK_INFINITY, CRUNCH_AT_LABEL, DE_UPGRADES, DREAM_BY_ID, INFINITY_UPGRADES, QUANTUM, REPEATABLE,
-  VOID_UPGRADES, crunchThreshold, piecewiseDeCost, dreamUpgradeEffects, infinityPointGain,
+  VOID_UPGRADES, ZPE_ENGINE, crunchThreshold, piecewiseDeCost, dreamUpgradeEffects, infinityPointGain,
   infinityRateMult, infinityStartLog10, infinityUpgradeCost, infinityUpgradeOwned,
-  quantumGrowthRate, quantumZpeRequirement, timeInfinityPointGain,
+  quantumGrowthRate, quantumPerPair, quantumStepMult, quantumToIPGain, quantumZpeRequirement,
+  tierMilestonesDone, zpeEngineCost, zpeEngineCountFreqUnlocked,
+  zpeEngineAffordableIn, zpeEngineExpBonus, zpeEngineLevel, zpeEngineTotalCost, zpeEngineUnlocked,
+  CRUNCH_ACCEL, accelCost, accelLevel, accelMaxLevel, coinageAffordableIn, coinageCap, coinageCost, coinageLevel, coinageTotalCost,
 } from "./config.js";
 import {
-  D, canBigCrunch, checkDeMilestones, checkZpeMilestones, collapseUnlocked,
+  D, bigCrunchGain, canBigCrunch, checkDeMilestones, checkZpeMilestones, collapseUnlocked,
   clampToAffordable, conversion, darkEnergyGainPerConversion, darkEnergyRate, deUpgradeCost, effectiveTraps,
   entropyRate, floorDiv, geometricSum, globalMultiplier, isAutoAcquire,
   kindProduct, matterRate, climbFactor, overloadFactor, particleRate, repeatableCost, trapCost, voidUpgradeCost,
   zpeMultiplier, zpeRate,
 } from "./formulas.js";
-import { addLevel, awardDream, deLevelOf, levelOf, pushLog } from "./state.js";
-
+import { addLevel, awardDream, deLevelOf, levelOf, pushLevelLog, pushLog } from "./state.js";
 // ══════════════════════════════════════════════════════════
 // 系数（供闭式解用）
 // ══════════════════════════════════════════════════════════
@@ -74,6 +76,24 @@ export function tick(state, dt) {
   //   用 dt 累加而不是读 wall clock —— 离线结算（advance）走的是同一个 tick，
   //   所以挂机 4 小时回来，这段时间也会被如实计入。
   state.infinityElapsed = (state.infinityElapsed ?? 0) + dt;
+
+  // ★ ④ 是**实时**产点的（对齐 AD 的 ipGen：被动产点，不是结算时一次性给）。
+  //   每帧按 `1/60 × 3^①等级` 进账，但**只计本次无限的前 30 分钟** ——
+  //   和改之前的总量完全一致（`min(耗时, 1800) ÷ 60 × 3^①`），只是拆成每帧发。
+  //   好处：挂机时点就在账上，不必等大坍缩；"单次 30 分钟"变成屏幕上的实时数字。
+  if (state.ipTimeBought) {
+    const cap = INFINITY_UPGRADES.ipTime.capSeconds ?? Infinity;
+    const before = Math.min(state.infinityElapsed - dt, cap);   // 本帧之前的可计时长
+    const after = Math.min(state.infinityElapsed, cap);         // 本帧之后
+    if (after > before) {
+      const gain = D(after - before)
+        .div(INFINITY_UPGRADES.ipTime.secondsPerPoint)
+        .mul(Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0));
+      state.infinityPoints = state.infinityPoints.add(gain);
+      // 本次无限"实时累计了多少"（仅供日志与界面显示；上限 = 30 分钟那笔）
+      state.ipTimeAccrued = (state.ipTimeAccrued ?? 0) + gain.toNumber();
+    }
+  }
 
   const P0 = state.resources.particle;
 
@@ -256,11 +276,13 @@ function phaseResets(state) {
 function phaseQuantumCapture(state) {
   if (!collapseUnlocked(state)) return;
   for (let guard = 0; guard < 200; guard++) {
-    const need = quantumZpeRequirement(state.quantumPairs);
+    const need = quantumZpeRequirement(state.quantumPairs, quantumStepMult(state));
     if (state.zpe.lt(need)) break;
     state.quantumPairs = state.quantumPairs.add(1);
     state.quantumPairsTotal = state.quantumPairsTotal.add(1);
-    state.quantum = state.quantum.add(QUANTUM.perPair);
+    state.quantum = state.quantum.add(quantumPerPair(state));   // 涨落增幅会把它从 2 提到 3
+    // ★ 记录"本次无限内的最大量子数"（量子铸币的收益基数；大坍缩时归零）
+    if (state.quantum.gt(state.peakQuantumRun ?? 0)) state.peakQuantumRun = state.quantum;
     pushLog(
       state,
       `⚛ 捕获第 ${state.quantumPairs.toString()} 对量子（门槛 1e${need.log10().toFixed(0)} ZPE）`,
@@ -356,7 +378,10 @@ export function buyRepeatable(state, id, max = false) {
   if (pool.lt(total)) return 0;
   state.resources[cfg.currency] = pool.sub(total);
 
+  const before = levelOf(state, id).toNumber();
   addLevel(state, id, k);
+  // ★ 只在关键节点写日志（1/5/10/50/100…）：自动获取模式一帧买几百级，逐级写会刷爆
+  pushLevelLog(state, cfg.name, before, before + k);
   if (cfg.firstRewardDream && !state.firstPurchase[id]) {
     state.firstPurchase[id] = true;
     state.dreamPoints = state.dreamPoints.add(1);
@@ -365,20 +390,28 @@ export function buyRepeatable(state, id, max = false) {
   return k;
 }
 
-/** 还能买几个（闭式解，O(1)） */
-export function affordableCount(state, id) {
-  const cfg = REPEATABLE[id];
-  const pool = state.resources[cfg.currency];
-  const r = cfg.costMult;
-  if (r <= 1) return 0;
-  const firstCost = repeatableCost(state, id);
+/**
+ * 等比价格 + 给定资源池 ⇒ 买得起几个（闭式解，O(1)）。
+ *
+ * 抽出来是为了让「三条主升级」「∞ 层①」「ZPE 引擎等级」共用同一套算法 ——
+ * 复制粘贴迟早会在某一份里忘记 `clampToAffordable` 的浮点兜底。
+ */
+export function affordableFromPool(firstCost, r, pool, cap = 1e7) {
+  if (!(r > 1)) return 0;
   if (pool.lt(firstCost)) return 0;
   // n = floor( log_r( pool×(r-1)/firstCost + 1 ) )
   const ratio = pool.mul(r - 1).div(firstCost).add(1);
   const n = ratio.log(r).floor().toNumber();
   if (!Number.isFinite(n) || n <= 0) return 0;
-  // ★ 显示的数量也必须是「真的买得起」的数量（log 同样有舍入）
-  return Math.min(clampToAffordable(firstCost, r, pool, Math.min(n, 1e7)), 1e7);
+  // ★ 显示/购买的数量也必须是「真的买得起」的数量（log 同样有舍入）
+  return Math.min(clampToAffordable(firstCost, r, pool, Math.min(n, cap)), cap);
+}
+
+/** 还能买几个（闭式解，O(1)） */
+export function affordableCount(state, id) {
+  const cfg = REPEATABLE[id];
+  if (!cfg) return 0;
+  return affordableFromPool(repeatableCost(state, id), cfg.costMult, state.resources[cfg.currency]);
 }
 
 /**
@@ -431,6 +464,9 @@ export function buyVoidUpgrade(state, id) {
   const cost = voidUpgradeCost(state, id);
   if (cfg.costDream && state.dreamPoints.lt(cfg.costDream)) return false;
   if (cost.gt(0) && state.zpe.lt(cost)) return false;
+  // ★ **门槛**（不是价格）：v9 要求 ZPE 到 1e8 才解锁 —— 原稿逻辑，见 config 的 `requireZpe`。
+  //   用户确认「v9 不改，故意设计的」，所以这里只挡"太早买"，不扣 ZPE。
+  if (cfg.requireZpe != null && state.zpe.lt(cfg.requireZpe)) return false;
 
   if (cfg.costDream) state.dreamPoints = state.dreamPoints.sub(cfg.costDream);
   if (cost.gt(0)) state.zpe = state.zpe.sub(cost);
@@ -467,7 +503,7 @@ export function buyDeUpgrade(state, id) {
   if (cost.darkEnergy) state.darkEnergy = state.darkEnergy.sub(cost.darkEnergy);
 
   state.deUpgradeLevels[id] = lv.add(1);
-  pushLog(state, `🌑 升级「${cfg.name}」到 ${state.deUpgradeLevels[id].toString()} 级`);
+  pushLevelLog(state, cfg.name, lv.toNumber(), lv.add(1).toNumber());
 
   if (cfg.firstRewardDream && !state.deFirstPurchase[id]) {
     state.deFirstPurchase[id] = true;
@@ -532,7 +568,7 @@ function autoBuyDeUpgrade(state, id) {
     if (k2 < 1) return 0;
     state.darkEnergy = pool.sub(acc);
     state.deUpgradeLevels[id] = lv.add(k2);
-    pushLog(state, `🤖 自动购买「${cfg.name}」${k2} 级 → ${state.deUpgradeLevels[id].toString()} 级`);
+    pushLevelLog(state, cfg.name, lv.toNumber(), lv.add(k2).toNumber());
     return k2;
   } else {
     return 0;   // 其他升级价格形态不同，不支持自动
@@ -554,7 +590,7 @@ function autoBuyDeUpgrade(state, id) {
   else state.zpe = pool.sub(total);
 
   state.deUpgradeLevels[id] = lv.add(k);
-  pushLog(state, `🤖 自动购买「${cfg.name}」${k} 级 → ${state.deUpgradeLevels[id].toString()} 级`);
+  pushLevelLog(state, cfg.name, lv.toNumber(), lv.add(k).toNumber());
   return k;
 }
 
@@ -574,7 +610,9 @@ function autoAcquire(state) {
       const cfg = REPEATABLE[id];
       const n = affordableCount(state, id);
       if (n <= 0) continue;
+      const before = levelOf(state, id).toNumber();
       addLevel(state, id, n);
+      pushLevelLog(state, cfg.name, before, before + n);
       if (cfg.firstRewardDream && !state.firstPurchase[id]) {
         state.firstPurchase[id] = true;
         state.dreamPoints = state.dreamPoints.add(1);
@@ -666,34 +704,35 @@ function resetForCollapse(state) {
 export function doBigCrunch(state) {
   if (!canBigCrunch(state)) return null;
 
-  // ★ ∞ 层：大坍缩的收益由两部分组成
-  //     ① 深度收益 = infinityPointGain(...) × 2^①等级
-  //     ④ 耗时收益 = (本次无限秒数 ÷ 60) × 2^①等级   ← 与深度无关的固定收入
-  //   两笔都吃 ① 的加成（用户明确要求）。
-  const ipMult = Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0);
-  const depthIP = infinityPointGain(state.resources.matter, state.brokenInfinity).mul(ipMult);
+  // ★ ∞ 层：大坍缩只发**深度部分**（④ 耗时收益已在 tick 里实时发过，这里再发就是重复发放）。
+  //   ⚠️ 必须走 `bigCrunchGain()` 这个**唯一数据源** —— 它含 ① 的加成、铸币倍率、量子铸币。
+  //      老写法自己算 `infinityPointGain × 3^①`，于是"界面显示"与"实际发放"会脱节。
+  const ip = bigCrunchGain(state);
+  const depthIP = ip.sub(quantumToIPGain(state));     // 纯深度部分（日志/显示用）
   const elapsed = state.infinityElapsed ?? 0;
-  const timeIP = timeInfinityPointGain(state, elapsed);
-  const ip = depthIP.add(timeIP);
+  const timeAccrued = state.ipTimeAccrued ?? 0;       // 本轮实时累计（显示/日志用）
 
   state.infinityPoints = state.infinityPoints.add(ip);
   state.bigCrunchCount = state.bigCrunchCount.add(1);
   resetForCollapse(state);
-  // ④ 的计时器归零：下一次无限从 0 开始重新累计
+  // ④ 的计时器与实时累计归零：下一次无限从 0 开始重新累计
   state.infinityElapsed = 0;
+  state.ipTimeAccrued = 0;
 
   // ★ 量子**会被大坍缩重置**。
   //   `quantumPairs`（门槛进度）也必须一起清 —— 否则门槛会退回 1e10，
   //   玩家可以靠反复坍缩刷量子。
   //   `quantumPairsTotal` 是累计统计量，保留。
   state.quantum = D(0);
+  state.peakQuantumRun = D(0);       // ★ 量子铸币的基数随量子一起归零
   state.quantumPairs = D(0);
 
   // ★ 阈值文案从 config 取（CRUNCH_AT_LABEL），不要手写 "1e308.25" ——
   //   手写的那个和实际用的 log10(Number.MAX_VALUE) = 1e308.2547 差 0.25 个数量级。
   pushLog(state, `🌌 大坍缩！物质触及 ${CRUNCH_AT_LABEL} 上限，获得 ${ip.toString()} 无限点（共 ${state.infinityPoints.toString()}）`);
-  if (timeIP.gt(0)) {
-    pushLog(state, `🌊 无限长河：本次无限耗时 ${fmtSeconds(elapsed)} → 额外 ${timeIP.toString()} 点（深度部分 ${depthIP.toString()}）`);
+  if (timeAccrued > 0) {
+    pushLog(state, `🌊 无限长河：本次无限 ${fmtSeconds(elapsed)} 期间实时进账 ${timeAccrued.toExponential(2)} 点` +
+      `（超出 ${Math.round((INFINITY_UPGRADES.ipTime.capSeconds ?? 0) / 60)} 分钟的部分不再产点）`);
   }
   // ⚠️ 这里曾经有一行 `pushLog(... 量子 +${q.toString()} ...)`，以及
   //    `return { infinityPoints: ip, quantum: q }` —— 但 v3 量子模型
@@ -706,7 +745,9 @@ export function doBigCrunch(state) {
   //    教训：**删一个功能时，要连带删掉它对外的返回值、日志、接口。**
   pushLog(state, `💭 梦想点保留（${state.dreamPoints.toString()} 点）`);
   awardDream(state, "bigcrunch", "首次大坍缩");
-  return { infinityPoints: ip, depthIP, timeIP };
+  // ⚠️ 返回值的 `infinityPoints` 是**本次实际发放**的点数（现在只有深度部分）；
+  //    耗时部分（④）已经在 tick 里实时发过了，`timeIPAccrued` 只是它的累计值，供日志/界面用。
+  return { infinityPoints: ip, depthIP, timeIPAccrued: D(timeAccrued) };
 }
 
 /** 耗时的短显示（日志用，纯展示，不参与运算） */
@@ -762,8 +803,22 @@ export function buyInfinityUpgrade(state, id) {
   state.infinityPoints = state.infinityPoints.sub(cost);
 
   if (id === "ipDouble") {
+    const before = (state.ipDoubleLevel ?? D(0)).toNumber();
     state.ipDoubleLevel = (state.ipDoubleLevel ?? D(0)).add(1);
-    pushLog(state, `∞ 无限增幅 → ${state.ipDoubleLevel.toString()} 级（无限点收益 ×${Decimal.pow(cfg.effectMult, state.ipDoubleLevel).toString()}）`);
+    // ★ 只在关键节点写日志（① 在贪心自动买法里一帧能连买好几级）
+    pushLevelLog(state, cfg.name, before, before + 1);
+  } else if (id === "thresholdFlat") {
+    state.thresholdFlatBought = true;
+    pushLog(state, `∞ 购买「${cfg.name}」：量子门槛步长 ×20 → ×10（量子数翻倍）`);
+  } else if (id === "pairBoost") {
+    state.pairBoostBought = true;
+    pushLog(state, `∞ 购买「${cfg.name}」：每次捕获 2 → 3 个量子`);
+  } else if (id === "unspentBoost") {
+    state.unspentBoostBought = true;
+    pushLog(state, `∞ 购买「${cfg.name}」：a区 产率开始吃未花无限点（封顶 ×${cfg.maxMult}）`);
+  } else if (id === "ipFromQuantum") {
+    state.infinityFromQuantumBought = true;
+    pushLog(state, `∞ 购买「${cfg.name}」：每次大坍缩额外按本次最大量子数给点（q²）`);
   } else if (id === "ipToZpe") {
     state.ipToZpeBought = true;
     pushLog(state, `∞ 购买「${cfg.name}」：ZPE 倍率开始吃无限点数量`);
@@ -781,7 +836,150 @@ export function buyInfinityUpgrade(state, id) {
     state.speedBought = { ...(state.speedBought ?? {}), [id]: true };
     pushLog(state, `∞ 购买「${cfg.name}」：量子成长速率上限 ×${cfg.rateMult}（当前 ×${infinityRateMult(state).toFixed(3)}）`);
   }
+  // ★ 无限升级也属于「不涉及梦想点系统」的加成 ⇒ **首次**购买任意一条给 1 梦想点。
+  //   和虚空/暗能量升级同源：用 awardDream 去重（它自己记 dreamAwarded，重复买不会再发）。
+  //   对可重复的 ① 来说就是"第一次买它的那一级"。
+  awardDream(state, `inf:${id}`, `首次购买无限升级「${cfg.name}」`);
   return { ok: true, cost, level: state.ipDoubleLevel ?? D(0) };
+}
+
+/** 坍缩加速器还能买几级（受**效果硬上限**约束） */
+export function accelAffordable(state) {
+  const room = accelMaxLevel() - accelLevel(state);
+  if (room <= 0) return 0;
+  return Math.min(
+    affordableFromPool(accelCost(state), CRUNCH_ACCEL.costGrowth, state.infinityPoints, room),
+    room,
+  );
+}
+
+/**
+ * 买「坍缩加速器」等级（`max = true` 买满）。
+ *
+ * 效果是**乘成长速率**（见 config：一次大坍缩的耗时与速率严格成反比），
+ * 所以它省的是"每次大坍缩要爬多久"—— 24h 档压到 18h 就靠它。
+ * 硬上限 `accelMaxLevel()`（效果 ×2）保证它不会变成第二个 runaway。
+ */
+export function buyAccel(state, max = false) {
+  const lv = accelLevel(state);
+  const room = accelMaxLevel() - lv;
+  if (room <= 0) return 0;
+  const first = accelCost(state);
+  const r = CRUNCH_ACCEL.costGrowth;
+  let k = max ? affordableFromPool(first, r, state.infinityPoints, room) : (state.infinityPoints.gte(first) ? 1 : 0);
+  k = Math.min(k, room);
+  if (k < 1) return 0;
+  const total = geometricSum(first, r, k);
+  if (state.infinityPoints.lt(total)) return 0;
+  state.infinityPoints = state.infinityPoints.sub(total);
+  state.accelLevel = D(lv).add(k);
+  pushLevelLog(state, "坍缩加速器", lv, lv + k);
+  if (lv + k >= accelMaxLevel()) {
+    pushLog(state, `⏩ 坍缩加速器已到顶（×${CRUNCH_ACCEL.maxMult}）—— 每次大坍缩的耗时已减半`);
+  }
+  return k;
+}
+
+// ══════════════════════════════════════════════════════════
+// ★ 无限铸币（**设计未冻结：用户保留最终修改权**）
+// ══════════════════════════════════════════════════════════
+
+/** 铸币还能买几级（**闸门优先**：档位放行 ∩ 买得起） */
+export function coinageAffordable(state) {
+  return coinageAffordableIn(state, state.infinityPoints);
+}
+
+/**
+ * 买铸币等级（`max = true` 买满）。
+ *
+ * 铁律（模型实测的教训）：
+ *   1. **硬性受档位闸门约束** —— `等级 ≤ capPerCrunch × 大坍缩次数`；
+ *      闸门是这条线唯一的节流阀，且**不许**和别的循环用加法耦合。
+ *   2. 价格走**分段软上限**（用户指定：影响永恒阶段的东西必须有极强软上限），
+ *      所以"买满"不能沿用单一公比的 `geometricSum`。
+ *   3. 日志守关键节点（自动买法一帧能连买几十级）。
+ */
+export function buyCoinage(state, max = false) {
+  const room = coinageCap(state) - coinageLevel(state).toNumber();
+  if (room <= 0) return 0;
+  const pool = state.infinityPoints;
+  const n = max ? coinageAffordable(state) : (pool.gte(coinageCost(state)) ? 1 : 0);
+  if (n <= 0) return 0;
+
+  const before = coinageLevel(state).toNumber();
+  const k = Math.min(n, room);
+  const total = coinageTotalCost(before, before + k);
+  if (pool.lt(total)) return 0;
+  state.infinityPoints = state.infinityPoints.sub(total);
+  state.coinageLevel = coinageLevel(state).add(k);
+
+  pushLevelLog(state, "无限铸币", before, before + k);
+  // 跨过"闸门放行上限"时提示一次（玩家需要知道该去大坍缩了）
+  const capNow = coinageCap(state);
+  if (before < capNow && before + k >= capNow) {
+    pushLog(state, `🪙 铸币已买满本档（${capNow} 级）—— 再想提升上限就得**大坍缩**一次`);
+  }
+  return k;
+}
+
+// ══════════════════════════════════════════════════════════
+// ★ ZPE 引擎（打破无限后 · 虚空系统子页）
+// ══════════════════════════════════════════════════════════
+
+/** 解锁 ZPE 引擎（10 无限点，一次性） */
+export function unlockZpeEngine(state) {
+  if (zpeEngineUnlocked(state)) return false;
+  if (state.infinityPoints.lt(ZPE_ENGINE.unlockCostIp)) return false;
+  state.infinityPoints = state.infinityPoints.sub(ZPE_ENGINE.unlockCostIp);
+  state.zpeEngineUnlocked = true;
+  awardDream(state, "zpeEngine", "解锁 ZPE 引擎");
+  pushLog(state, `⚙ 解锁「ZPE 引擎」：之后可以拿无限点买等级，等级同时给三条加成`);
+  return true;
+}
+
+/** ZPE 引擎还能买几级（分段几何的闭式解，见 config.zpeEngineAffordableIn） */
+export function zpeEngineAffordable(state) {
+  if (!zpeEngineUnlocked(state)) return 0;
+  return zpeEngineAffordableIn(state, state.infinityPoints);
+}
+
+/**
+ * 买 ZPE 引擎等级（`max=true` 买满）。
+ *
+ * 三条机制都由等级驱动（见 config 的 ZPE_ENGINE）：
+ *   · ② 产出倍率 `(1+0.1×等级)²` —— 解锁即有
+ *   · ③ 倍率吃「计数频率」     —— 等级 ≥ 5
+ *   · ① 抬高倍率公式的指数     —— 等级 ≥ 10
+ * 所以跨过 5 / 10 级时要给一条**明确的**日志（规则变了，玩家必须知道）。
+ *
+ * ⚠️ 价格是**分段几何**（软上限）：10 级后每级涨价 ×20，100 级后再 ^1.3，1000 级后再 ^1.8。
+ *    所以这里不能再用"单一公比"的 geometricSum —— 直接用段内闭式算出 k 与总价。
+ */
+export function buyZpeEngineLevel(state, max = false) {
+  if (!zpeEngineUnlocked(state)) return 0;
+  const lv0 = zpeEngineLevel(state);
+  const before = lv0.toNumber();
+  const k = max ? zpeEngineAffordable(state) : (state.infinityPoints.gte(zpeEngineCost(state)) ? 1 : 0);
+  if (k < 1) return 0;
+
+  // 总价 = 从当前级买到 before+k 级的分段累加（log 空间求差即可）
+  const total = zpeEngineTotalCost(before, before + k);
+  if (state.infinityPoints.lt(total)) return 0;
+  state.infinityPoints = state.infinityPoints.sub(total);
+
+  state.zpeEngineLevel = lv0.add(k);
+
+  // 等级本身也守"只在关键节点写日志"的规矩
+  pushLevelLog(state, "ZPE 引擎", before, before + k);
+  // ★ 跨过 ③ / ① 的解锁线时，单独说清楚
+  if (before < ZPE_ENGINE.countFreqLevel && before + k >= ZPE_ENGINE.countFreqLevel) {
+    pushLog(state, `⚙ ZPE 引擎 ${ZPE_ENGINE.countFreqLevel} 级：ZPE 倍率开始吃「计数频率」加成（指数 2.0 → 3.7）`);
+  }
+  if (before < ZPE_ENGINE.expLevel && before + k >= ZPE_ENGINE.expLevel) {
+    pushLog(state, `⚙ ZPE 引擎 ${ZPE_ENGINE.expLevel} 级：ZPE 倍率公式的指数开始提升` +
+      `（+${ZPE_ENGINE.expPerLevel}/级，封顶 +${ZPE_ENGINE.expMax}）`);
+  }
+  return k;
 }
 
 /** 无限升级当前的「效果」文本数值（UI 与自检共用，保证从公式推导） */
@@ -798,17 +996,20 @@ export function infinityUpgradeEffect(state, id) {
     return { mult: D(1).add(D(INFINITY_UPGRADES.ipToTransmuter.perIp).mul(state.ipToTransmuterBought ? ip : 0)) };
   }
   if (id === "ipTime") {
-    // 当前这次无限"已经攒了多少"，以及买下后每小时的基础收入
+    // ④ 是**实时**产点的：给出 每秒速率 / 本次已实时累计 / 单次上限那一笔 / 是否已封顶
     const cap = INFINITY_UPGRADES.ipTime.capSeconds;
-    const counted = cap == null ? (state.infinityElapsed ?? 0) : Math.min(state.infinityElapsed ?? 0, cap);
-    const perHour = new Decimal(cap == null ? 3600 : Math.min(3600, cap))
-      .div(INFINITY_UPGRADES.ipTime.secondsPerPoint)
-      .mul(Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0));
-    const accrued = state.ipTimeBought
-      ? D(counted).div(INFINITY_UPGRADES.ipTime.secondsPerPoint)
-        .mul(Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0))
-      : D(0);
-    return { perHour, accrued };
+    const mult = Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0);
+    const perSecond = mult.div(INFINITY_UPGRADES.ipTime.secondsPerPoint);
+    const elapsed = state.infinityElapsed ?? 0;
+    return {
+      perSecond,
+      perHour: perSecond.mul(3600),
+      accrued: state.ipTimeBought ? D(state.ipTimeAccrued ?? 0) : D(0),
+      /** 单次无限最多能拿到的那笔（= 上限 ÷ 60 × 3^①） */
+      capGain: cap == null ? null : perSecond.mul(cap),
+      /** 已经过了上限 → 本轮不再进账，界面提示"该收了" */
+      capped: cap != null && elapsed >= cap,
+    };
   }
   if (cfg?.startLog10 != null) {
     return { startLog10: cfg.startLog10, activeLog10: infinityStartLog10(state) };

@@ -14,7 +14,7 @@
  */
 
 import Decimal from "../dist/break_eternity.esm.js";
-import { BREAK_INFINITY, CLIMB, INFINITY_ORDER, INFINITY_UPGRADES, OVERLOAD, REPEATABLE, VOID_UPGRADES, DE_UPGRADES, DREAM_UPGRADES, crunchThreshold, infinityRateMult, infinityUpgradeOwned, overloadThreshold, quantumGrowthRate } from "../src/config.js";
+import { BREAK_INFINITY, CLIMB, INFINITY_ORDER, INFINITY_UPGRADES, OVERLOAD, REPEATABLE, VOID_UPGRADES, DE_UPGRADES, DREAM_UPGRADES, crunchThreshold, infinityRateMult, infinityUpgradeOwned, overloadThreshold, quantumGrowthRate, timeIPPerSecond, timeInfinityPointGain } from "../src/config.js";
 import { newState, serialize, deserialize } from "../src/state.js";
 import {
   advance, breakInfinity, buyDeUpgrade, buyDreamUpgrade, buyInfinityUpgrade, buyRepeatable,
@@ -49,46 +49,52 @@ check("④ 每点 = 60 秒", ipTimeCfg.secondsPerPoint === 60, `secondsPerPoint 
 check("④ 单次上限 = 30 分钟", ipTimeCfg.capSeconds === 1800, `capSeconds = ${ipTimeCfg.capSeconds}`);
 
 {
-  // 一次"104 分钟的无限"应该给 **30** 点（撞上限；没上限时才是 104）
+  // ★ ④ 现在是**实时**产点（对齐 AD 的 ipGen），所以按"推进时间"来验，而不是"结算时一次性给"
   const s = newState();
   s.ipTimeBought = true;
   s.infinityPoints = new Decimal(0);
-  s.resources.matter = crunchThreshold();      // 单数据源，别手写 pow 精度
   s.peakMatter = new Decimal("1e30");
   s.brokenInfinity = true;
-  s.infinityElapsed = 104 * 60;
-  const r = doBigCrunch(s);
-  const expect = ipTimeCfg.capSeconds / ipTimeCfg.secondsPerPoint;      // 30
-  check("④ 104 分钟的无限 → 30 点（撞 30 分钟上限）", r && r.timeIP.eq(expect), `timeIP = ${r ? r.timeIP.toString() : "—"}`);
-  check("大坍缩后计时器归零", s.infinityElapsed === 0, `infinityElapsed = ${s.infinityElapsed}`);
+  const rate = timeIPPerSecond(s).toNumber();
+  check("④ 实时速率 = 1/60 点/秒", Math.abs(rate - 1 / 60) < 1e-12, `rate = ${rate}`);
 
-  // 上限以下按实际耗时给（10 分钟 → 10 点）
-  const u = newState();
-  u.ipTimeBought = true;
-  u.infinityPoints = new Decimal(0);
-  u.resources.matter = crunchThreshold();
-  u.peakMatter = new Decimal("1e30");
-  u.brokenInfinity = true;
-  u.infinityElapsed = 10 * 60;
-  const r2 = doBigCrunch(u);
-  check("④ 10 分钟的无限 → 10 点（未撞上限）", r2 && r2.timeIP.eq(10), `timeIP = ${r2 ? r2.timeIP.toString() : "—"}`);
+  const ip0 = s.infinityPoints;
+  advance(s, 600);                                   // 10 分钟
+  const got10 = s.infinityPoints.sub(ip0).toNumber();
+  check("④ 挂 10 分钟实时进账 10 点", Math.abs(got10 - 10) < 1e-6, `进账 = ${got10}`);
+
+  advance(s, 3600);                                  // 再挂 60 分钟（远超 30 分钟上限）
+  const got70 = s.infinityPoints.sub(ip0).toNumber();
+  const capGain = ipTimeCfg.capSeconds / ipTimeCfg.secondsPerPoint;    // 30
+  check("④ 挂 70 分钟只进账 30 点（30 分钟上限）", Math.abs(got70 - capGain) < 1e-6, `进账 = ${got70}`);
+  check("④ 实时累计与公式总量一致", Math.abs(s.ipTimeAccrued - capGain) < 1e-6 &&
+    timeInfinityPointGain(s, 70 * 60).toNumber() === capGain,
+    `累计 = ${s.ipTimeAccrued}，公式总量 = ${timeInfinityPointGain(s, 70 * 60).toNumber()}`);
+
+  // 大坍缩**不能再发一次**耗时部分（那会是重复发放）
+  s.resources.matter = crunchThreshold();
+  const ipBeforeCrunch = s.infinityPoints;
+  const r = doBigCrunch(s);
+  const paid = s.infinityPoints.sub(ipBeforeCrunch).toNumber();
+  check("④ 大坍缩只发深度部分（不重复发耗时）", r && paid < 2, `本次发放 = ${paid}（深度 1，不应含 30）`);
+  check("④ 大坍缩后计时器与实时累计都归零", s.infinityElapsed === 0 && s.ipTimeAccrued === 0,
+    `elapsed = ${s.infinityElapsed}，accrued = ${s.ipTimeAccrued}`);
 }
 
 {
-  // 买下 ① 之后，④ 的收益要跟着乘 ① 的倍率
+  // 买下 ① 之后，④ 的实时速率要跟着乘 ① 的倍率
   const s = newState();
   s.ipTimeBought = true;
   s.ipDoubleLevel = new Decimal(3);           // ×3^3 = ×27
   s.infinityPoints = new Decimal(0);
-  s.resources.matter = crunchThreshold();     // ★ 必须用阈值本身，别用 pow(10, 308.2547)（精度差一点就触发不了）
   s.peakMatter = new Decimal("1e30");
   s.brokenInfinity = true;
-  s.infinityElapsed = 600;                    // 10 分钟 → 基础 10 点
-  const r = doBigCrunch(s);
-  const expect = new Decimal(600 / 60).mul(Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, 3)); // 10×27 = 270
-  check("④ 吃 ① 的加成（×27）", r && r.timeIP.sub(expect).abs().lt(1e-6),
-    `timeIP = ${r ? r.timeIP.toString() : "—"}（期望 ${expect.toString()}）`);
-  check("大坍缩后计时器归零", s.infinityElapsed === 0, `infinityElapsed = ${s.infinityElapsed}`);
+  advance(s, 600);                            // 10 分钟 → 基础 10 点 × 27
+  const expect = new Decimal(600 / 60).mul(Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, 3));
+  const got = s.infinityPoints;
+  check("④ 吃 ① 的加成（10 分钟 ×27 = 270）", got.sub(expect).abs().lt(1e-6),
+    `进账 = ${got.toString()}（期望 ${expect.toString()}）`);
+  check("④ 实时累计同步", Math.abs(s.ipTimeAccrued - expect.toNumber()) < 1e-6, `accrued = ${s.ipTimeAccrued}`);
 }
 
 // ── ③ ②③ 的效果真的进公式 ──

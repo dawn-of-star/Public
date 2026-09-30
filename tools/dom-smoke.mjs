@@ -408,9 +408,16 @@ let zoneGuard = "未跑";
   const undefinedZone = [...byId.keys()].filter((k) => (byId.get(k)?.className ?? "").includes("zone-undefined"));
   // ★ 顶部「全局加成」槽必须真的显示三个因子（各带自己的乘区色）——
   //   它是「全局（乘积）」和「计数频率（那个升级）」不再混淆的**可视依据**。
-  const slot = byId.get("countfreq-detail")?.innerHTML ?? "";
-  const slotOk = ["zone-dream", "zone-countfreq", "zone-de"].every((c) => slot.includes(c)) &&
-    /梦想点 ×[\d.]+/.test(slot) && /计数频率 ×[\d.]+/.test(slot) && /暗能量 ×[\d.]+/.test(slot);
+  //   ⚠️ 现在是**三个稳定的子 span**（`gm-dream/…/gm-de`），不再是 render 里拼 innerHTML
+  //      —— 每帧 innerHTML 会重置 hover 状态，是"鼠标移上去闪烁"的根因。
+  //   乘区色是**静态**的（写死在 HTML 标签上），所以从标签里查；数值读运行时文本。
+  const tagOf = (id) => (html.match(new RegExp(`<span[^>]*id="${id}"[^>]*>`)) ?? [""])[0];
+  const slotText = ["gm-dream", "gm-countfreq", "gm-de"]
+    .map((id) => byId.get(id)?.textContent ?? "").join("  ");
+  const slotOk = [["gm-dream", "zone-dream"], ["gm-countfreq", "zone-countfreq"], ["gm-de", "zone-de"]]
+    .every(([id, cls]) => tagOf(id).includes(cls)) &&
+    /梦想点 ×[\d.]+/.test(slotText) && /计数频率 ×[\d.]+/.test(slotText) && /暗能量 ×[\d.]+/.test(slotText);
+  const slot = slotText;
   // ★ 乘区图例：每个乘区必须恰好出现一次，且虹色那一格用渐变块
   //   （加新乘区时最容易忘的就是图例 —— 词条上色了但图例里没有）
   const legend = byId.get("zone-legend")?.innerHTML ?? "";
@@ -429,4 +436,74 @@ let zoneGuard = "未跑";
 }
 const guardFailed3 = guardFailed2 || zoneGuard.startsWith("❌");
 
-process.exit(caught || guardFailed3 ? 1 : 0);
+// ══════════════════════════════════════════════════════════
+// 回归守卫：虚空科技的子页（悬停浮出两条入口 + ZPE 引擎面板）
+// ══════════════════════════════════════════════════════════
+// 踩过的同类坑：加了面板却忘了接进 activateTab 的白名单 -> 页面永远不显示。
+// 所以这里既查静态 HTML（浮出层两条入口），也真的切一次子页看面板显隐。
+let subGuard = "未跑";
+{
+  const flyoutOk = /id="tab-flyout-void"[\s\S]{0,400}id="flyout-void-core"[\s\S]{0,400}id="flyout-void-zpe"/.test(html) &&
+    (html.match(/data-tab="zpe"/g) ?? []).length >= 1;
+  const { activateTab } = await import(new URL("../src/ui.js", import.meta.url).href);
+  activateTab("zpe");
+  const toZpe = byId.get("panel-zpe")?.hidden === false && byId.get("panel-void")?.hidden === true;
+  activateTab("void");
+  const backToVoid = byId.get("panel-void")?.hidden === false && byId.get("panel-zpe")?.hidden === true;
+
+  // ★ 浮出层不能被祖先**裁剪**。踩过的坑：`.tabs` 上写了 `overflow-x: auto`，
+  //   于是（CSS 规范：一轴非 visible 时另一轴的 visible 会算成 auto）标签条成了滚动容器，
+  //   绝对定位的浮出层被裁掉、而滚动条又被藏起来 —— 现象就是「看不到，要滚轮才滚出来」。
+  //   ⚠️ 判定必须**提取所有 overflow 声明再看值**：
+  //      第一版用 `(?!visible)` 前后查找，被正则回溯绕过（`overflow: visible` 也判成裁剪）；
+  //      而且只写 `overflow:` 会漏掉分轴写法 `overflow-x/-y` —— 那正是真凶。
+  const cssText = readFileSync(join(ROOT, "css", "amoled.css"), "utf8");
+  const ruleOf = (sel) => cssText.match(new RegExp(`\\${sel}\\s*\\{([^}]*)\\}`))?.[1] ?? "";
+  const clipsOverflow = (body) =>
+    [...body.matchAll(/overflow(?:-[xy])?\s*:\s*([a-z]+)/g)].some((m) => m[1] !== "visible");
+  const clipping = [".tabs", ".card", ".wrap", ".col"].filter((sel) => {
+    const body = ruleOf(sel);
+    return body && clipsOverflow(body);
+  });
+  // 顺带确认浮出层用的是绝对定位 + 有层级（不然会被面板盖住或跟着文档流排）
+  const flyoutCss = ruleOf(".tab-flyout");
+  const flyoutStyle = /position\s*:\s*absolute/.test(flyoutCss) && /z-index\s*:/.test(flyoutCss);
+
+  const ok = flyoutOk && toZpe && backToVoid && clipping.length === 0 && flyoutStyle;
+  subGuard = ok
+    ? "✅ 2 条悬浮子页入口；切换正常；无祖先裁剪浮出层"
+    : `❌ 悬浮入口=${flyoutOk}｜切到 zpe=${toZpe}｜切回 void=${backToVoid}` +
+      `｜会裁剪的祖先=${clipping.join(",") || "无"}｜浮出层样式=${flyoutStyle}`;
+  console.log(`  虚空子页        ${subGuard}`);
+  console.log();
+}
+
+// ══════════════════════════════════════════════════════════
+// 风格守卫：**面板正文里不许出现 emoji**
+// ══════════════════════════════════════════════════════════
+// 踩过的坑：优化「无限 / ZPE 引擎」文案时我顺手把 0.3.4 原稿的 emoji 一起搬了过来，
+// 用户当场指出「emoji 不要啊，没让你全学习啊，amoled 主风格不要了？」——
+// 原稿是霓虹 emoji 风，AMOLED 是**细线 + 大写小节标题 + 徽标 + 无图标**。
+// 所以：文案写法可以借（箭头短句），**图标不许借**。锁图标一律用 HTML 实体（&#9881;）。
+{
+  const strip = (s) => s.replace(/<!--[\s\S]*?-->/g, "");   // 注释里的 ★ 不算
+  const panelOf = (id) => {
+    const start = html.indexOf(`id="${id}"`);
+    if (start < 0) return "";
+    const next = html.indexOf('class="tab-panel"', start);
+    return strip(html.slice(start, next < 0 ? undefined : next));
+  };
+  // 只匹配真正的 emoji 区段（刻意排除 → U+2192 这类"箭头标点" —— 它是文案写法，不是图标）
+  const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u;
+  // 全部面板都查（回填文案时最容易顺手搬 emoji）
+  const bad = ["panel-void", "panel-zpe", "panel-de", "panel-quantum", "panel-infinity", "panel-eternity"]
+    .filter((id) => EMOJI.test(panelOf(id)));
+  const okStyle = bad.length === 0;
+  console.log(`  AMOLED 风格    ${okStyle ? "✅ 六个面板正文无 emoji（图标只用 HTML 实体）" : `❌ 面板里出现了 emoji：${bad.join(", ")}`}`);
+  console.log();
+  if (!okStyle) process.exit(1);
+  console.log();
+}
+const guardFailed4 = guardFailed3 || subGuard.startsWith("❌");
+
+process.exit(caught || guardFailed4 ? 1 : 0);
