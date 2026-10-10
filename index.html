@@ -149,6 +149,26 @@
         </div>
 
         <div class="tab-panel" id="panel-console">
+  <!-- ══════════════════════════════════════════════════════════
+       ★★★ 2025（设计稿第 27 行 / 用户裁定）：**主面板重组**
+         「主显示区域中除去日志系统输出会调整到梦想页面后，
+           **升级中心 / 点击获取熵 / 各项加成比例都合并为主面板页面下**
+           （这些页面在自动化后玩家不会在意的）」
+       ⇒ 这四张卡收进一个**可折叠分组**（默认收起 —— 自动化后确实不需要看）
+       ⚠️ 用户要求：「建议有个**下拉条**，同时下拉条中有个**复选框**以确认记住展开状态」
+          ⇒ 整行标题 = 下拉条（可点 + `aria-expanded` 无障碍）+ 右侧"记住"复选框 ✓
+       ⚠️ **日志那张卡已搬到梦想子页**（设计稿同一句的前半句）✓
+       ══════════════════════════════════════════════════════════ -->
+  <button class="fold-head" id="fold-manual-head" aria-expanded="false" aria-controls="fold-manual-body">
+    <span class="fold-arrow">▸</span>
+    <span>手动操作</span>
+    <span class="fold-hint" id="fold-manual-hint">（已收起 —— 自动化后不需要看）</span>
+    <span class="fold-remember" title="勾选后，你的展开/收起选择会被记住（下次打开还是这样）">
+      <input type="checkbox" id="fold-manual-remember">
+      <span>记住</span>
+    </span>
+  </button>
+  <div class="fold-body" id="fold-manual-body" hidden>
   <div class="card">
           <h2>操作</h2>
           <div class="click-zone">
@@ -198,12 +218,14 @@
             <div><span>游戏时长</span><b id="d-playtime">0s</b></div>
           </div>
         </div>
+  </div><!-- /fold-body 手动操作 -->
 
-        <!-- 日志 -->
-        <div class="card">
-          <h2>日志</h2>
-          <div id="log-panel"></div>
-        </div>
+  <!-- ★★★ 2025（设计稿第 27 行）：日志卡**已搬到梦想子页** ——
+       原文「主显示区域中除去**日志系统输出会调整到梦想页面**后，…」
+       ⚠️ 这里只留一条说明，免得玩家以为日志消失了（它就在主控台 ▸ 梦想）✓ -->
+  <p class="note">
+    日志已移到 <b>主控台 ▸ 梦想</b> 子页（设计稿第 27 行），并会**暴露给 N.E.K.O 读取**（见 <code>docs/NEKO.md</code> §9）。
+  </p>
       </div>
 
       <!-- ══════════════════════════════════════════════════════════
@@ -231,6 +253,21 @@
           <p class="note">
             「阈值自动获取」= 达成条件即拿，<b>不扣钱</b>（来自虚空升级 <b>v9</b>）。
             暗能量那 5 条来自<b>梦想升级</b>（相变 / 加速 / 增幅 / 斜率自动化）。
+          </p>
+        </div>
+
+        <!-- ★★★ 2025（设计稿第 27 行）：**日志系统输出调整到梦想页面** ——
+             原文：「主显示区域中除去日志系统输出会调整到梦想页面后，…」
+             ⚠️ 同一句的后半句说"这些页面在自动化后玩家不会在意的"是**指后面那三样**
+                （升级中心 / 点击获取熵 / 各项加成比例）⇒ 那些留在主控台的折叠组里 ✓
+             ⚠️ 日志**不在任何重置中清空**（游戏内既有约定），接入 SDK 后由猫娘读取（见 NEKO.md §9）
+             ⚠️ `#log-panel` 的 id **必须保持不变** —— ui.js 的日志渲染按它缓存 ✓ -->
+        <div class="card">
+          <h2>日志 <span class="badge" id="log-badge">不随重置清空</span></h2>
+          <div id="log-panel"></div>
+          <p class="note">
+            这份日志会<b>暴露给 N.E.K.O 读取</b>（<code>docs/NEKO.md</code> §9），并带上
+            <code>kind</code>（crunch / buy / milestone / quantum / system）。
           </p>
         </div>
       </div>

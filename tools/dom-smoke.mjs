@@ -115,15 +115,47 @@ function makeEl(tag = "div", id = "") {
       this._handlers ??= {};
       (this._handlers[type] ??= []).push(fn);
     },
-    /** 测试用：真的把点击事件派发给已注册的监听器 */
+    /**
+     * 测试用：真的把点击事件派发给已注册的监听器。
+     *
+     * ★★★ 2025：**事件对象必须够真** —— 原来只给 `{ target, preventDefault }`，
+     *   于是任何用到 `e.stopPropagation()` 的代码在烟测里**当场抛**
+     *   （真实浏览器里它有 ⇒ 是 mock 不完整，不是代码错 ✗）。
+     *   我就是在折叠分组的复选框上撞到这条的。
+     * ⚠️ 也顺带模拟浏览器行为：`checkbox` 被点会自动翻转 `checked` ✓
+     */
     click() {
-      for (const fn of this._handlers?.click ?? []) fn({ target: this, preventDefault() {} });
+      if (this.type === "checkbox" || "checked" in this) {
+        this.checked = !this.checked;
+      }
+      const ev = {
+        target: this,
+        currentTarget: this,
+        // ★★★ 2025：记账 —— 断言要能验证"代码真的调了 stopPropagation"
+        //   ⚠️ 本 mock **没有冒泡链**（`click()` 只调自己节点上的监听器）⇒
+        //      "点复选框不连带折叠"这条**测不出来**（我自检时发现：拿掉
+        //      `e.stopPropagation()` 断言照样全绿 ⇒ 那是个假断言 ✗）
+        //   ⇒ 改成直接看"有没有调"（真正的冒泡语义由浏览器保证，不必在这里重造）
+        __stopPropagationCalled: false,
+        __preventDefaultCalled: false,
+        preventDefault() { this.__preventDefaultCalled = true; },
+        stopPropagation() { this.__stopPropagationCalled = true; },
+        stopImmediatePropagation() { this.__stopPropagationCalled = true; },
+      };
+      this.__lastEvent = ev;
+      for (const fn of this._handlers?.click ?? []) fn(ev);
     },
     removeEventListener() {},
-    setAttribute() {},
-    getAttribute() { return null; },
+    // ★★★ 2025：原来 `setAttribute` 是**空函数**、`getAttribute` 永远 `null`
+    //   ⇒ "属性真的被设上了"这类 bug **测不出来**（与当初 `addEventListener` 是空函数
+    //      导致"按钮点了没反应"测不出来，是**同一类**问题 ✗）
+    //   ⇒ 真正记账。`aria-expanded` 这类无障碍属性现在是可断言的 ✓
+    setAttribute(name, value) { assertThis(this, node, "setAttribute"); this._attrs.set(String(name), String(value)); },
+    getAttribute(name) { assertThis(this, node, "getAttribute"); return this._attrs.has(String(name)) ? this._attrs.get(String(name)) : null; },
+    hasAttribute(name) { return this._attrs.has(String(name)); },
     focus() {},
   };
+  node._attrs = new Map();
   // textContent 写入计数（验证 Proxy 优化生效）
   let _t = "";
   Object.defineProperty(node, "textContent", {
@@ -574,15 +606,36 @@ let zoneGuard = "未跑";
   // 用户要求：「左侧的主页面也最好并入右侧列表，标题为主控台」。
   //   原来那 5 张卡是**标签页系统之外**的独立左列 ⇒ 切标签时它们永远在，
   //   占用半屏却与当前页无关。并进 `#panel-console` 后由 `activateTab` 统一管理 ✓
+  //
+  // ★★★ 2025（设计稿第 27 行 / 用户裁定）：**主面板重组**之后位置变了：
+  //   · **日志**搬去**梦想子页**（设计稿同句前半句）
+  //   · 其余 4 张收进主控台里的**折叠组**（用户选 b 方案：可折叠 + 下拉条 + "记住"复选框）
+  //   ⇒ 断言必须跟着改，否则它就变成"钉死旧布局的假断言"✗
+  //   ⚠️ 但**不能只改成"4 张卡在 panel-console 里"** —— 那样折叠组的存在、以及
+  //      "收起时 `hidden`、展开时可见"就没人守了（折叠最容易坏的就是这条）✗
   {
     const consolePanel = byId.get("panel-console");
     const consoleTab = byId.get("tab-console");
-    // 5 张卡的标志性 id 必须**都在 panel-console 里**
-    const marks = ["btn-click", "upgrade-list", "btn-buy-trap", "d-entropy-rate", "log-panel"];
+    // 4 张"手动操作"卡必须**都在折叠组（fold-manual-body）里**，而折叠组在主控台内
+    const marks = ["btn-click", "upgrade-list", "btn-buy-trap", "d-entropy-rate"];
     const pIdx = html.indexOf('id="panel-console"');
     const pNext = html.indexOf('class="tab-panel"', pIdx + 1);
     const seg = pIdx >= 0 ? html.slice(pIdx, pNext < 0 ? undefined : pNext) : "";
-    const inside = marks.filter((m) => seg.includes(`id="${m}"`));
+    const foldIdx = seg.indexOf('id="fold-manual-body"');
+    const inside = marks.filter((m) => {
+      const i = seg.indexOf(`id="${m}"`);
+      return i >= 0 && foldIdx >= 0 && i > foldIdx;      // 必须在折叠组**之内**
+    });
+    // 日志必须**在梦想子页**里（而不是主控台）
+    const dIdx = html.indexOf('id="panel-dream"');
+    const dNext = html.indexOf('class="tab-panel"', dIdx + 1);
+    const dreamSeg = dIdx >= 0 ? html.slice(dIdx, dNext < 0 ? undefined : dNext) : "";
+    const logInDream = dreamSeg.includes('id="log-panel"') && !seg.includes('id="log-panel"');
+    // 折叠组的三件套（下拉条 / 内容 / 记住复选框）都在，且**默认收起**
+    const foldOk = !!byId.get("fold-manual-head") && !!byId.get("fold-manual-body")
+      && !!byId.get("fold-manual-remember")
+      && byId.get("fold-manual-body")?.hidden === true
+      && byId.get("fold-manual-head")?.getAttribute?.("aria-expanded") === "false";
     // 默认打开的是主控台
     const active = (byId.get("tab-console")?.className ?? "").includes("active");
     // ★ 2025：**标签栏必须在所有面板之前**。
@@ -591,11 +644,102 @@ let zoneGuard = "未跑";
     const tabsIdx = html.indexOf('id="tabs"');
     const firstPanelIdx = html.indexOf('class="tab-panel"');
     const tabsFirst = tabsIdx >= 0 && firstPanelIdx >= 0 && tabsIdx < firstPanelIdx;
-    const guarded = !!consolePanel && !!consoleTab && inside.length === marks.length && active && tabsFirst;
-    console.log(`  主控台          ${guarded ? `✅ 5 张卡都在 #panel-console 内（${inside.length}/${marks.length}）；默认打开；标签栏在面板之前`
-      : `❌ 面板=${!!consolePanel} 标签=${!!consoleTab} 卡在面板内=${inside.length}/${marks.length} 默认打开=${active} 标签栏在前=${tabsFirst}`}`);
+    const guarded = !!consolePanel && !!consoleTab && inside.length === marks.length
+      && logInDream && foldOk && active && tabsFirst;
+    console.log(`  主控台          ${guarded
+      ? `✅ 4 张手动卡都在**折叠组内**（${inside.length}/${marks.length}）且默认收起 ✓`
+        + `｜日志已在**梦想子页** ✓｜下拉条/记住复选框都在 ✓｜默认打开；标签栏在面板之前`
+      : `❌ 面板=${!!consolePanel} 标签=${!!consoleTab} 卡在折叠组内=${inside.length}/${marks.length}`
+        + ` 日志在梦想页=${logInDream} 折叠组=${foldOk} 默认打开=${active} 标签栏在前=${tabsFirst}`}`);
     console.log();
     if (!guarded) process.exitCode = 1;
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2025 新增（设计稿第 27 行 / 用户裁定）：
+  //   **折叠分组真的能折** + **"记住展开状态"复选框真的记**
+  // ══════════════════════════════════════════════════════════
+  // 用户原话：「建议有个**下拉条**，同时下拉条中有个**复选框**以确认**记住展开状态**」
+  //   ⇒ 三件必须真的成立的事：
+  //     ① 点下拉条 ⇒ `hidden` 与 `aria-expanded` **同步**翻转（最容易只改一个 ✗）
+  //     ② 点复选框 ⇒ **不能连带折叠**（它在标题行内部 ⇒ 冒泡会误触）
+  //     ③ 勾了"记住"后 ⇒ 展开态写进 localStorage，重启按它还原 ✓
+  {
+    const { UI_FOLDS: FOLDS } = await import(new URL("../src/config.js", import.meta.url).href);
+    const f = FOLDS.manual;
+    // ⚠️⚠️ **不要**为了测"重启"而再调一次 `initUI`：
+    //   ① 它会给同一个节点**再挂一遍监听器**（累积 ⇒ 一次点击触发两次）✗
+    //   ② 它还要求**全套 handlers**（我加上后当场 `handlers.onBuyZpeEngine is not a function`）✗
+    //   ⇒ 拉一个**全新的模块实例**（`?fresh` 绕开 ESM 缓存），把导出的
+    //      `applyFoldPreference` / `setFoldOpen` 拿来对**自己的节点**做纯验证 ✓
+    const fresh = await import(new URL("../src/ui.js?fold-probe", import.meta.url).href);
+    const head = byId.get("fold-manual-head");
+    const body = byId.get("fold-manual-body");
+    const box = byId.get("fold-manual-remember");
+
+    const LSKEY = f.rememberKey;
+    const LOG = [];
+    const makeStore = (init = {}) => {
+      const m = new Map(Object.entries(init));
+      return {
+        getItem: (k) => (m.has(k) ? m.get(k) : null),
+        setItem: (k, v) => { m.set(k, String(v)); LOG.push([k, String(v)]); },
+        removeItem: (k) => { m.delete(k); LOG.push([k, null]); },
+        _map: m,
+      };
+    };
+    const savedLS = globalThis.localStorage;
+
+    // ── ① 点下拉条：`hidden` 与 `aria-expanded` **同步**翻转 ──
+    //   折叠最经典的 bug 就是"只改了一个"⇒ 这里两个都查 ✓
+    globalThis.localStorage = makeStore();
+    head?.click?.();                                   // 默认收起 ⇒ 这一下应展开
+    const opened = body?.hidden === false && head?.getAttribute?.("aria-expanded") === "true";
+    head?.click?.();
+    const closed = body?.hidden === true && head?.getAttribute?.("aria-expanded") === "false";
+
+    // ── ② 点复选框**不该连带折叠**（它在标题行内部 ⇒ 冒泡会误触）──
+    //   ⚠️⚠️ 本 mock **没有冒泡链** ⇒ "折叠态没变"这句**测不出**代码有没有调
+    //      `stopPropagation`（我自检时发现：拿掉那一行，断言照样全绿 ⇒ 假断言 ✗）
+    //   ⇒ 判据改成**直接的**：这次点击的事件对象上，"停止冒泡"必须被调用过 ✓
+    //      （真正的冒泡语义由浏览器保证，没必要在这里重造一套事件系统）
+    const before = body.hidden;
+    box?.click?.();                                    // mock 会像浏览器那样翻转 checked
+    const stopCalled = box?.__lastEvent?.__stopPropagationCalled === true;
+    const noSideEffect = body.hidden === before && box.checked === true;
+
+    // ── ③ "记住"：勾上后每次折叠都写入，且**重开页面按它还原** ──
+    head?.click?.();                                   // 展开 ⇒ 写入 "open"
+    const wroteOpen = globalThis.localStorage._map.get(LSKEY) === "open";
+    // 模拟"重开页面"：用**同一份 localStorage** 跑一次初始化
+    const r1 = fresh.applyFoldPreference(f, head, body, box);
+    const restored = r1.open === true && r1.remembered === true
+      && body.hidden === false && head.getAttribute("aria-expanded") === "true";
+
+    // 收起 ⇒ 应写入 "closed"（记忆是双向的）
+    head?.click?.();
+    const wroteClosed = globalThis.localStorage._map.get(LSKEY) === "closed";
+    const r2 = fresh.applyFoldPreference(f, head, body, box);
+    const restoredClosed = r2.open === false && body.hidden === true;
+
+    // ── ④ 取消勾选 ⇒ 清键 + 回到默认（收起）──
+    box?.click?.();                                    // checked → false
+    const cleared = globalThis.localStorage._map.get(LSKEY) === undefined && box.checked === false;
+    const r3 = fresh.applyFoldPreference(f, head, body, box);
+    const backToDefault = r3.remembered === false && r3.open === f.defaultOpen;
+
+    globalThis.localStorage = savedLS;
+
+    const foldOk = opened && closed && stopCalled && noSideEffect && wroteOpen && restored
+      && wroteClosed && restoredClosed && cleared && backToDefault;
+    console.log(`  折叠分组        ${foldOk
+      ? `✅ 点下拉条：hidden 与 aria-expanded 同步翻转 ✓｜点复选框不连带折叠 ✓`
+        + `｜点复选框时调了 stopPropagation ✓（不连带折叠）｜勾"记住"⇒ 写入 open/closed 且**重开页面双向还原** ✓｜取消勾选 ⇒ 清键并回默认（收起）✓`
+      : `❌ 展开=${opened}｜再收起=${closed}｜点复选框无副作用=${noSideEffect}`
+        + `｜stopPropagation=${stopCalled}｜写open=${wroteOpen}｜重启还原开=${restored}｜写closed=${wroteClosed}｜重启还原关=${restoredClosed}`
+        + `｜取消勾选清键=${cleared}｜回默认=${backToDefault}｜记录=${JSON.stringify(LOG.slice(-3))}`}`);
+    console.log();
+    if (!foldOk) process.exitCode = 1;
   }
 
   // ══════════════════════════════════════════════════════════

@@ -157,6 +157,40 @@ body {
   color: var(--text-dim); text-align: center; line-height: 1.9;
 }
 
+/* ══════════════ 折叠分组（设计稿第 27 行：主面板重组）══════════════
+   ★★★ 2025（用户裁定 + 他的自述）：「我要是用户估计会倾向于 **b 方案**（可折叠）
+     —— 建议有个**下拉条**，同时下拉条中有个**复选框**以确认记住展开状态」
+     ⇒ 一行标题即"下拉条"（整行可点，右侧箭头指示）+ 一个复选框控制"记住" ✓
+   ⚠️ 用 `<button>` 而不是 `<div onclick>`：键盘可达（Enter/Space 原生支持）✓
+   ⚠️ 复选框**不随折叠一起藏起来** —— 它就住在标题行里（收起时也必须能看到/改）✓ */
+.fold-head {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 10px 12px; cursor: pointer; text-align: left;
+  background: var(--bg-card); border: 1px solid var(--line);
+  border-radius: var(--radius); color: var(--text-dim);
+  font-size: 12px; font-weight: 600; letter-spacing: 1px; text-transform: uppercase;
+  font-family: inherit;
+}
+.fold-head:hover { border-color: var(--line-strong); color: var(--text); }
+/* 箭头：收起时 ▸、展开时 ▾（纯 CSS 旋转，不换字符 ⇒ 不会因字体缺字变方块） */
+.fold-head .fold-arrow {
+  display: inline-block; transition: transform .15s ease; font-size: 10px;
+}
+.fold-head[aria-expanded="true"] .fold-arrow { transform: rotate(90deg); }
+.fold-head .fold-count { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; }
+/* 复选框那一格：单独一列，点击**不触发折叠**（见 ui.js 的 stopPropagation） */
+.fold-head .fold-remember {
+  display: flex; align-items: center; gap: 4px; margin-left: 8px;
+  text-transform: none; letter-spacing: 0; font-weight: 400;
+  color: var(--text-faint); cursor: pointer;
+}
+.fold-head .fold-remember input { cursor: pointer; margin: 0; }
+.fold-body { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
+.fold-body[hidden] { display: none; }
+/* 折叠时给个提示：内容还在，只是收起来了（避免"以为没了"） */
+.fold-head[aria-expanded="false"] .fold-hint { display: inline; }
+.fold-head .fold-hint { display: none; text-transform: none; letter-spacing: 0; font-weight: 400; color: var(--text-faint); }
+
 /* ══════════════ 资源条 ══════════════ */
 
 .resources {

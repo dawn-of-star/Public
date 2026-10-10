@@ -34,8 +34,11 @@ import {
   // ★★★ 2025：永恒升级「永恒增幅」（设计稿 33~35 行）
   epMultFactor, epMultPriceAt, epMultAffordableIn, ETERNITY_UPGRADES,
   // ★★★ 2025（`docs/NEKO.md` §7）：猫猫卡片 —— 与实发同源
-  nekoGlobalExponent, nekoNextTier, NEKO, nekoDriftRoom, NEKO_ITEMS,  // ★★★ 2025（设计稿第 24 行）：自动化状态卡要读"哪几条 DE 升级被自动买"
+  nekoGlobalExponent, nekoNextTier, NEKO, nekoDriftRoom, NEKO_ITEMS,
+  // ★★★ 2025（设计稿第 24 行）：自动化状态卡要读"哪几条 DE 升级被自动买"
   dreamUpgradeEffects,
+  // ★★★ 2025（设计稿第 27 行）：主面板折叠分组的定义（下拉条 + "记住"键）
+  UI_FOLDS,
   // ★ 2025：引擎 5 条机制的参数（UI 文案要显示 A/knee/coeff，**从 config 取，不手写** ✗）
   ENGINE_MECH,
   // ★★★ 2025：① 无限增幅置顶行的渲染需要它
@@ -217,6 +220,10 @@ function cache() {
     "neko-chat-badge", "neko-chat", "neko-msg-placeholder", "neko-sdk-state",
     // ★★★ 2025：梦想（自动化）子页（用户裁定归属主控台；目前是壳 + 自动化状态）
     "dream-page-badge",
+    // ★ 2025（设计稿第 27 行）：**日志搬到梦想子页**后的徽标
+    "log-badge",
+    // ★★★ 2025（设计稿第 27 行）：主面板**折叠分组**（下拉条 + "记住"复选框）
+    "fold-manual-head", "fold-manual-body", "fold-manual-remember", "fold-manual-hint",
     // ★★★ 2025：全局加成槽的**好感度指数**那一格（生效时才显示）
     "gm-neko",
     // ★★★ 2025：**自动化状态**（已移到梦想子页 ⇒ id 仍是这两个）
@@ -1616,6 +1623,94 @@ function applyStaticZones() {
   }
 }
 
+/**
+ * ★★★ 2025（设计稿第 27 行 / 用户裁定）：**折叠分组的唯一实现**。
+ *
+ * 需求（用户原话）：「我要是用户估计会倾向于 **b 方案**（可折叠）——
+ *   建议有个**下拉条**，同时下拉条中有个**复选框**以确认**记住展开状态**」
+ *
+ * 行为：
+ *   · 未勾"记住" ⇒ 每次打开页面都用 `defaultOpen`（**不记忆**）
+ *   · 勾了"记住" ⇒ 把当前展开态写进 localStorage，下次按它还原 ✓
+ *
+ * ⚠️ 三个易错点，都在这一个函数里收口：
+ *   ① 复选框在**标题行内部** ⇒ 点它**不能**连带折叠（`stopPropagation`）
+ *   ② `localStorage` 可能抛（隐身模式 / 配额满）⇒ 全程 try/catch，
+ *      失败就退化成"不记忆"（**绝不能因此让 UI 初始化失败** ✗）
+ *   ③ 展开态必须同时反映到 `aria-expanded`（无障碍 + CSS 箭头）**和** `hidden`
+ */
+function setupFolds() {
+  for (const f of Object.values(UI_FOLDS)) {
+    const head = el[`fold-${f.id}-head`];
+    const body = el[`fold-${f.id}-body`];
+    const box = el[`fold-${f.id}-remember`];
+    if (!head || !body) continue;
+
+    const store = {
+      read() {
+        try {
+          const v = localStorage.getItem(f.rememberKey);
+          return v === "open" ? true : v === "closed" ? false : null;
+        } catch { return null; }
+      },
+      write(open) {
+        try { localStorage.setItem(f.rememberKey, open ? "open" : "closed"); } catch { /* 不记忆 */ }
+      },
+      clear() {
+        try { localStorage.removeItem(f.rememberKey); } catch { /* 忽略 */ }
+      },
+    };
+
+    // 初始态归 `applyFoldPreference` 管（**导出** ⇒ 断言能单独验"重启后按记忆还原"✓）
+    applyFoldPreference(f, head, body, box, store);
+
+    // 标题行 = 下拉条（`<button>` ⇒ Enter/Space 原生可用 ✓）
+    head.addEventListener("click", () => {
+      const nowOpen = body.hidden;              // 收起 ⇒ 这次要展开
+      setFoldOpen(head, body, nowOpen);
+      if (box?.checked) store.write(nowOpen);
+    });
+
+    // 复选框：勾上时**以当前状态为准**写入（而不是改状态）——
+    //   否则"勾选"这个动作本身会顺带折叠一次，很反直觉 ✗
+    box?.addEventListener("click", (e) => {
+      e.stopPropagation();                      // ⚠️ 易错点①：别连带折叠
+      if (e.target.checked) store.write(!body.hidden);
+      else store.clear();                       // 取消勾选 ⇒ 回到"不记忆"
+    });
+  }
+}
+
+/** 折叠态的**唯一写入点**：`hidden` 与 `aria-expanded` 必须一起改（分开改必漏一个 ✗） */
+export function setFoldOpen(head, body, open) {
+  body.hidden = !open;
+  head.setAttribute("aria-expanded", open ? "true" : "false");
+}
+
+/**
+ * 折叠的**初始态**（导出 ⇒ 断言可以单独验"重开页面按记忆还原"，
+ * 不必调整个 `initUI` —— 那样会**累积监听器**并需要全套 handlers ✗）。
+ *
+ * 规则：**只认"记住"勾选过的情况**下的存储值，否则用 `defaultOpen`。
+ * ⚠️ "用户是否勾过记住"这件事本身也得记住 ⇒ 用同一个键的**存在性**表达 ✓
+ */
+export function applyFoldPreference(f, head, body, box, store) {
+  const s = store ?? {
+    read() {
+      try {
+        const v = localStorage.getItem(f.rememberKey);
+        return v === "open" ? true : v === "closed" ? false : null;
+      } catch { return null; }
+    },
+  };
+  let remembered = false;
+  try { remembered = localStorage.getItem(f.rememberKey) !== null; } catch { remembered = false; }
+  if (box) box.checked = remembered;
+  const saved = remembered ? s.read() : null;
+  setFoldOpen(head, body, saved === null ? f.defaultOpen === true : saved);
+  return { remembered, open: body.hidden === false };
+}
+
 export function initUI(handlers) {
   cache();
   applyStaticZones();     // ★ 静态按钮的乘区色（唯一数据源 = ZONE_OF）
@@ -1630,6 +1725,7 @@ export function initUI(handlers) {
   buildDreamUpgrades();
   buildInfinityUpgrades();
   setupTabs();
+  setupFolds();           // ★ 2025：主面板折叠分组（设计稿第 27 行 + 用户裁定的下拉条/记住）
   // ★ 2025：默认打开「主控台」（原左列的 5 张卡并进标签页后成为第一个面板）
   activateTab("console");
 
