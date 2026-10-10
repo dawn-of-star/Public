@@ -21,6 +21,7 @@
   "//为什么没有 dependencies": "游戏本体零依赖：break_eternity.js 已经以 dist/ 的形式内置，src/ 直接 import 它。只想玩网页版的话完全不用 npm install。",
   "//为什么需要 devDependencies": "只有「打包成 exe」和「桌面端调试」才需要 electron / electron-builder。",
   "//为什么需要 serve": "index.html 里的 src/main.js 是 type=\"module\"，file:// 协议下会被 CORS 拦掉，必须走 HTTP。Electron 里由 electron/main.cjs 注册的 app:// 协议代劳。",
+  "//产物名为什么用 ASCII": "中文 exe 名在部分下载/CI 环境下会被转义或乱码；productName 仍是「空想增量」，只影响文件名。⚠️ 这一行必须留在 build 段【外面】：electron-builder 26 对 build 段做严格 schema 校验，段内任何未知属性（包括 // 开头的注释键）都会让它直接拒绝启动，CI 会以 exit code 1 失败。",
   "devDependencies": {
     "electron": "^44.4.5",
     "electron-builder": "^26.15.3"
@@ -43,7 +44,6 @@
       "!**/*.map"
     ],
     "compression": "normal",
-    "//产物名为什么用 ASCII": "中文 exe 名在部分下载/CI 环境下会被转义或乱码；productName 仍是「空想增量」，只影响文件名",
     "win": {
       "icon": "build/icon.ico",
       "target": [

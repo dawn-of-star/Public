@@ -23,7 +23,7 @@ import { nekoHostPresent } from "./neko.js";
 import {
   REPEATABLE, VOID_UPGRADES, ZONES, ZONE_OF, ZPE_ENGINE, ZPE_EXPONENT, ZPE_MILESTONES,
   overloadThreshold, quantumDeGainBonus, quantumDeMultBonus,
-  matterSpanExponent, matterSpanMult,
+  matterSpanExponent, matterSpanMult, matterSpanStatus,
   quantumEntropyMultiplier, quantumStepMult, quantumZpeRequirement,
   zpeEngineCost, zpeEngineCountFreqUnlocked, zpeEngineAddBonus, zpeEngineMultBonus, zpeEngineLevel,
   zpeEngineProdMult, zpeEngineUnlocked, quantumZpeMultBonus, qOf, zoneOf, TIER_MILESTONES, DE_UPGRADES, DE_MILESTONES, DREAM_UPGRADES, INFINITY_ORDER, INFINITY_UPGRADES, BASE, ETERNITY, eternityPointGain, ipDoubleMult, tierMilestonesDone, matterTotalExponent, MATTER_B_KNEE, MATTER_B_KMAX, COLLAPSE, crunchThreshold, CRUNCH_AT_LABEL, pageUnlocked, markPageUnlocked,
@@ -189,7 +189,7 @@ function cache() {
     "q-locked", "q-content", "q-need",
     "val-quantum", "quantum-sub", "quantum-mult", "quantum-demult", "quantum-degain", "quantum-zpemult", "quantum-grow",
     // ★ 跨度层（2025）：k / 乘数 / 基准 / 徽标
-    "span-badge", "span-k", "span-mult", "span-base",
+    "span-badge", "span-de", "span-state", "span-k", "span-mult", "span-base",
     "quantum-pairs", "quantum-next-cost", "quantum-cur-zpe",
     "quantum-bar", "quantum-bar-text",
     "dream-badge", "dream-upgrade-list",
@@ -1262,6 +1262,11 @@ export function render(state) {
   // ── 量子面板（第四层，红色）──
   renderQuantum(state, R);
 
+  // ── ★ 跨度层：**无条件刷新** ──
+  //   它在 `renderQuantum` 里会因"量子页本轮未推进"被提前 return 跳过，
+  //   而它恰恰在**打破无限之后**才生效 ⇒ 必须放在这里 ✓（见 renderSpanLayer 的说明）
+  renderSpanLayer(state);
+
   // ── 无限面板（金色，独立标签页）──
   renderInfinity(state);
 
@@ -1360,18 +1365,11 @@ function renderQuantum(state, R) {
   if (el["quantum-zpemult"]) el["quantum-zpemult"].textContent = `+${fmt(quantumZpeMultBonus(state.quantum, ebmQ))}`;
 
   // ── ★ 跨度层（2025 用户方案）：k 由量子给，把暗能量撬到 inf ──
-  //    与引擎**同一个函数**（`matterSpanExponent` / `matterSpanMult`）⇒ 显示即实发。
-  {
-    const spanOn = (state.spanDeBase ?? new Decimal(0)).gt(0);
-    el["span-badge"].textContent = spanOn ? "已开启" : "未开启";
-    el["span-badge"].classList.toggle("on", spanOn);
-    el["span-k"].textContent = matterSpanExponent(state).toFixed(4);
-    const mult = matterSpanMult(state);
-    el["span-mult"].textContent = fmtMult(mult);
-    el["span-base"].textContent = spanOn
-      ? sci(state.spanDeBase)          // ★ 2025 统一科学计数法（原 `"1e" + log10`）
-      : "—（需先买「门槛压平」）";
-  }
+  //    ⚠️⚠️ **不在这里渲染**：本函数在 `!showContent` 时**提前 return**（见上），
+  //      而跨度层恰恰是"打破无限之后才生效"的机制 ——
+  //      那时量子页可能显示「已解锁 · 待推进」⇒ 跨度层整块**永远不刷新** ✗
+  //      （用户裁定：「ui 确保在**购买门槛压平后**正确显示就行」⇒ 就是这条）
+  //    ⇒ 已抽成 `renderSpanLayer(state)`，在 `render()` 里**无条件**调用 ✓
 
   // ── 梦想点一次性升级 ──
   let dOwned = 0;
@@ -1390,6 +1388,8 @@ function renderQuantum(state, R) {
     if (c) c.textContent = has ? "已生效" : `花费 ${d.cost} 梦想点（持有 ${fmt(state.dreamPoints, 0)}）`;
   }
   el["dream-badge"].textContent = `${dOwned} / ${DREAM_UPGRADES.length}`;
+  //   ⚠️ 跨度层**不在这里**渲染 —— 本函数会在 `!showContent` 时提前 return，
+  //      而跨度层是"打破无限之后"才生效的 ⇒ 见 `renderSpanLayer`（在 render() 里无条件调用）✓
 }
 
 // ══════════════════════════════════════════════════════════
@@ -1709,6 +1709,44 @@ export function applyFoldPreference(f, head, body, box, store) {
   const saved = remembered ? s.read() : null;
   setFoldOpen(head, body, saved === null ? f.defaultOpen === true : saved);
   return { remembered, open: body.hidden === false };
+}
+
+/**
+ * ★★★ 2025（用户裁定：「ui 确保在**购买门槛压平后**正确显示就行」）：**跨度层**渲染。
+ *
+ * ── 为什么必须独立成一个函数（而不是留在 `renderQuantum` 里）──
+ *   `renderQuantum` 在"本轮还没推进到量子页"时**提前 return**（`if (!showContent) return`），
+ *   而跨度层是**打破无限之后**才生效的机制 —— 那一刻量子页往往正显示
+ *   「已解锁 · 待推进」⇒ 留在里面就**永远不刷新**（徽标停在静态 HTML 的初值）✗
+ *   ⇒ 抽出来，在 `render()` 里**无条件**调用（与猫猫卡同一做法）✓
+ *
+ * ── 判据唯一来源 ──
+ *   `matterSpanStatus(state)`（config.js）。原来这里自己写 `spanDeBase > 0`，
+ *   而实发（`matterSpanMult`）看 `thresholdFlatBought`
+ *   ⇒ "引擎到手 → 买到门槛压平"这段会显示「已开启」而实际乘数恒 ×1 ✗（显示 ≠ 实发）
+ *   ⇒ 现在徽标只在**真的在乘**（`mult > 1`）时才说"已生效"，
+ *     中间每个阶段都有**具体原因**（armed / 未超基准 / 未开启）✓
+ */
+function renderSpanLayer(state) {
+  if (!el["span-badge"]) return;
+  const st = matterSpanStatus(state);
+  el["span-badge"].textContent = st.on ? "已生效"
+    : st.armed ? "已开启（待超过基准）"
+      : "未开启";
+  el["span-badge"].classList.toggle("on", st.on);
+  if (el["span-k"]) el["span-k"].textContent = st.k.toFixed(4);
+  if (el["span-mult"]) el["span-mult"].textContent = fmtMult(st.mult);
+  if (el["span-base"]) {
+    el["span-base"].textContent = st.base.gt(0) ? sci(st.base) : "—";
+  }
+  // ★ 新增：**当前暗能量 / 基准** —— 玩家唯一能判断"离生效还差多少"的地方 ✓
+  if (el["span-de"]) {
+    el["span-de"].textContent = st.base.gt(0)
+      ? `${sci(state.darkEnergy)} / ${sci(st.base)}` +
+        (st.overBase ? `（有效量超出 ${(st.effectiveLog10 - st.base.log10().toNumber()).toFixed(1)} 阶）` : "")
+      : "—";
+  }
+  if (el["span-state"]) el["span-state"].textContent = st.reason;
 }
 
 export function initUI(handlers) {

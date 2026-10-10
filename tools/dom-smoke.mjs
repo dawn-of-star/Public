@@ -1227,6 +1227,95 @@ let zoneGuard = "未跑";
       }
 
       // ══════════════════════════════════════════════════════════
+      // ★★★ 2025 新增（用户裁定：「ui 确保在**购买门槛压平后**正确显示就行」）：
+      //   **跨度层显示的判据必须与实发同源**
+      // ══════════════════════════════════════════════════════════
+      // 修之前的 bug（典型"显示 ≠ 实发"）：
+      //   `ui.js` 用 `spanDeBase > 0` 判"已开启"，而 `matterSpanMult` 看 `thresholdFlatBought`
+      //   而**基准是在「引擎到手」时就记的** ⇒ 两者之间会显示「已开启」但实际乘数恒 ×1 ✗
+      // ⇒ 现在唯一来源 = `matterSpanStatus(state)`；本断言守四个阶段的文案与数值 ✓
+      {
+        const cfgSp = await import(new URL("../src/config.js", import.meta.url).href);
+        const { newState: nsSp } = await import(new URL("../src/state.js", import.meta.url).href);
+        const { render: renderSp } = await import(new URL("../src/ui.js", import.meta.url).href);
+        const { default: DecSp } = await import(new URL("../dist/break_eternity.esm.js", import.meta.url).href);
+        const DSp = (x) => new DecSp(x);
+        const read = (id) => (byId.get(id)?.textContent ?? "").trim();
+        // ⚠️⚠️ **决定性问题**：`ui.js` 的 `el` 缓存与 `byId` 是不是同一批节点？
+        //   （若不是，说明 mock 的 `getElementById` 与 `el` 的建表各拿了一份 ⇒
+        //     所有"读渲染结果"的断言都是假的 ✗ —— 这正是我正在排查的）
+        const uiMod = await import(new URL("../src/ui.js", import.meta.url).href);
+        const elMap = uiMod.el;
+        const sameNode = elMap?.["span-badge"] === byId.get("span-badge");
+        if (!sameNode) {
+          // 用 setAttribute 打标记（mock 现在会记账）来确认它们是不是两个不同对象
+          elMap?.["span-badge"]?.setAttribute?.("data-probe", "from-el");
+          const viaById = byId.get("span-badge")?.getAttribute?.("data-probe");
+          console.log(`  ⚠️ el 缓存与 byId 不是同一节点！byId 侧读到的标记 = ${JSON.stringify(viaById)}`);
+        }
+        // ⚠️⚠️ mock 的 DOM 节点是**共享的**（全页面只有一个 #span-badge）
+        //   ⇒ 必须**渲染完立刻读**；先渲染四次再批量读 ⇒ 四次读到的都是最后一次的残留 ✗
+        //   （我第一版就这么写的，结果四阶段输出完全一样、看起来像"实现全错"）
+        const probe = (mut) => {
+          const s = nsSp();
+          mut(s);
+          renderSp(s);
+          return {
+            state: s,
+            badge: read("span-badge"),
+            base: read("span-base"),
+            mult: read("span-mult"),
+            de: read("span-de"),
+            stateTxt: read("span-state"),
+          };
+        };
+
+        // ① 全新存档：未开启 + 基准显示 "—"
+        const p1 = probe(() => {});
+        const ok1 = p1.badge === "未开启" && p1.base.includes("—") && p1.mult.includes("1.00")
+          && p1.stateTxt.includes("门槛压平");
+
+        // ② ★ **关键回归**：引擎到手（记了基准）但**没买开关** ⇒
+        //    修之前这里会显示「已开启」而乘数 ×1（自相矛盾）✗
+        const p2 = probe((s) => { s.spanDeBase = DSp(1e6); s.darkEnergy = DSp(1e20); });
+        const ok2 = p2.badge !== "已生效" && p2.mult === "×1.00"
+          && cfgSp.matterSpanStatus(p2.state).on === false;
+
+        // ③ 买了门槛压平 且 DE 已超基准 ⇒ 真的生效，且**徽标与乘数一致**
+        const p3 = probe((s) => {
+          s.thresholdFlatBought = true; s.spanDeBase = DSp(1e6); s.darkEnergy = DSp(1e20);
+        });
+        const st3 = cfgSp.matterSpanStatus(p3.state);
+        const ok3 = st3.on === true && st3.mult.gt(1)
+          && p3.badge === "已生效" && p3.mult !== "×1.00"
+          && p3.de.includes("/");                       // ★ 新增的"当前/基准"那一行必须有值
+
+        // ④ 买了开关但 DE 还没超基准 ⇒ 既不能说"未开启"也不能说"已生效"
+        const p4 = probe((s) => {
+          s.thresholdFlatBought = true; s.spanDeBase = DSp(1e6); s.darkEnergy = DSp(1e3);
+        });
+        const r4 = cfgSp.matterSpanStatus(p4.state);
+        const ok4 = r4.armed === true && r4.on === false && p4.badge.includes("待超过基准");
+
+        // ⑤ **同源检查**：徽标说的"已生效"必须与 `matterSpanMult > 1` 严格一致
+        const consistent = [p1.state, p2.state, p3.state, p4.state].every((s) => {
+          const r = cfgSp.matterSpanStatus(s);
+          return r.on === cfgSp.matterSpanMult(s).gt(1);
+        });
+
+        const okSp = ok1 && ok2 && ok3 && ok4 && consistent;
+        console.log(`  跨度层显示      ${okSp
+          ? `✅ 四阶段文案都对：未开启 ✓｜★引擎到手但没买开关 ⇒ **不再谎报"已开启"**（乘数仍 1.00）✓`
+            + `｜买开关+DE超基准 ⇒ "已生效"且乘数 >1 ✓｜买了但没超基准 ⇒ "待超过基准" ✓`
+            + `｜徽标「已生效」与「matterSpanMult > 1」**严格同源** ✓`
+          : `❌ ①[${p1.badge}|${p1.base}|${p1.mult}]`
+            + ` ②[${p2.badge}|${p2.mult}] ③[${p3.badge}|${p3.mult}|${p3.de}] ④[${p4.badge}]`
+            + `｜同源=${consistent}`}`);
+        console.log();
+        if (!okSp) process.exitCode = 1;
+      }
+
+      // ══════════════════════════════════════════════════════════
       // ★★★ 2025 新增（`docs/NEKO.md` §5 / §9）：**N.E.K.O 接入层（无宿主版本）**
       // ══════════════════════════════════════════════════════════
       // 用户裁定：「先做无宿主版本」。所以这条断言守的是**降级契约**：

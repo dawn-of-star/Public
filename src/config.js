@@ -2882,6 +2882,52 @@ export function matterSpanMult(state) {
 }
 
 /**
+ * ★★★ 2025（用户裁定：「ui 确保在购买门槛压平后正确显示就行」）：
+ * **跨度层的状态 + 显示值，唯一来源**。
+ *
+ * ── 为什么必须抽出来 ──
+ *   原来**显示侧与实发侧各有一套判据**（本项目"显示 ≠ 实发"的头号成因 ✗）：
+ *     `ui.js`  : `spanOn = state.spanDeBase > 0`      ← 只看"基准记了没"
+ *     `matterSpanMult` : `if (!state.thresholdFlatBought) return 1`  ← 看"开关买了没"
+ *   而**基准是在「引擎到手」时就记的**（见 `matterSpanMult` 的注释），
+ *   开关却是「门槛压平」⇒ **在"引擎到手 → 买到门槛压平"这段里，
+ *   界面会显示「已开启」而实际乘数恒为 ×1** ✗
+ *
+ * ⇒ 本函数把三者（开关 / 基准 / 当前暗能量相对基准的位置）**一次说清**，
+ *   界面与断言都读它 ⇒ 不可能再脱节 ✓
+ *
+ * @returns {{on:boolean, k:number, mult:Decimal, base:Decimal, deLog10:number,
+ *            effectiveLog10:number, overBase:boolean, reason:string}}
+ */
+export function matterSpanStatus(state) {
+  const base = state.spanDeBase ?? new Decimal(0);
+  const de = state.darkEnergy ?? new Decimal(0);
+  const k = matterSpanExponent(state);
+  const mult = matterSpanMult(state);
+  const deLog10 = de.gt(0) ? de.log10().toNumber() : 0;
+  const effectiveLog10 = effectiveDarkEnergyLog10(state);
+  const overBase = base.gt(0) && de.gt(base);
+
+  let reason = "";
+  if (!state.thresholdFlatBought) reason = "状态：未开启（需先买「门槛压平」）";
+  else if (base.lte(0)) reason = "状态：基准未记录（应在 ZPE 引擎到手时记录）";
+  else if (!overBase) reason = "状态：暗能量尚未超过基准 ⇒ 乘数恒为 ×1";
+  else reason = "状态：已生效";
+
+  return {
+    on: mult.gt(1),                    // ★ "真的在乘"才叫开启（而不是"开关买了"）
+    armed: state.thresholdFlatBought === true && base.gt(0),   // 开关+基准就绪（但可能还没超过基准）
+    k,
+    mult,
+    base,
+    deLog10,
+    effectiveLog10,
+    overBase,
+    reason,
+  };
+}
+
+/**
  * 汇总已购量子升级的效果（占位标题保留）
  */
 

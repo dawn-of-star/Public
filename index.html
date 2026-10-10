@@ -548,14 +548,20 @@
             </div>
 
             <!-- ★ 跨度层（2025 用户方案）：k 由量子给，把暗能量撬到 inf。
-                 这两行是**派生数值**（不是可购买的加成条目）⇒ 刻意不上乘区色，
-                 落点（物质）已由「物质」乘区里的条目承担。 -->
+                 这几行是**派生数值**（不是可购买的加成条目）⇒ 刻意不上乘区色，
+                 落点（物质）已由「物质」乘区里的条目承担。
+                 ★★★ 2025（用户裁定）：「ui 确保在**购买门槛压平后**正确显示就行」
+                   ⇒ 新增「当前暗能量 / 基准」与**状态说明**两行 ——
+                     它们是玩家唯一能判断"离生效还差多少"的地方 ✓
+                   ⚠️ 全部由 ui.js 从 `matterSpanStatus(state)` 推导（**判据唯一来源**）✗ 不写死 -->
             <h2 style="margin-top:16px">跨度层 <span class="badge" id="span-badge">未开启</span></h2>
             <div class="detail">
               <div><span>跨度幂 k</span><b id="span-k">1.000</b></div>
               <div><span>跨度乘数（物质产出）</span><b id="span-mult">×1.00</b></div>
               <div><span>暗能量基准</span><b id="span-base">—</b></div>
+              <div><span>当前暗能量 / 基准</span><b id="span-de">—</b></div>
             </div>
+            <p class="rule" id="span-state">状态：未开启（需先买「门槛压平」）</p>
             <p class="rule">
               k = min(1 + 0.5165·<b>√量子个数</b>, <b>6.1651</b>)｜物质产出 ×(暗能量 / 基准)^k
             </p>
