@@ -28,12 +28,19 @@ jobs:
   build-windows:
     runs-on: windows-latest
 
-    # ⚠️ 不要在这里用 npm_config_electron_mirror 覆盖 Electron 下载源。
-    # 曾经覆盖回 github.com/electron/electron/releases/download/，理由是
-    # 「GitHub 的构建机直连 GitHub 最快」—— 实测这个假设不成立：
-    # v0.6.5 / v0.6.17 / v0.6.18 三次构建**全部**死在「安装依赖」这一步，
-    # 因为 electron 的 postinstall 要下 ~100MB 二进制，从 GitHub Releases 拉会卡住。
-    # 现在交给项目根目录的 .npmrc（npmmirror）—— 那是已验证 400ms 内响应的源。
+    # Electron 的 Chromium 内核（约 100MB）由 @electron/get 在 postinstall 阶段下载，
+    # 打包时 electron-builder 也可能再去取发行版。统一指向 npmmirror。
+    #
+    # ⚠️ 历史教训：这里曾用 npm_config_electron_mirror 把源覆盖回
+    # github.com/electron/electron/releases/download/，理由是「GitHub 的构建机直连
+    # GitHub 最快」。实测该假设不成立 —— 从 GitHub Releases 拉 100MB 级文件会卡住。
+    # （不过 v0.6.5/0.6.17/0.6.18 三次失败的真凶是 package-lock.json 里两处被篡改的
+    #  依赖范围，与镜像无关；那次覆盖已在 f57a469 之前移除。）
+    #
+    # 另外：.npmrc 里的 electron_mirror 已不被新版 npm 识别（会报 Unknown project config），
+    # 所以这里用环境变量显式指定 —— 这是官方支持的覆盖方式。
+    env:
+      ELECTRON_MIRROR: https://npmmirror.com/mirrors/electron/
 
     steps:
       - name: 检出代码
@@ -67,6 +74,36 @@ jobs:
       #   在 CI 上有偶发风险，没有放进流程里。）
       - name: 自检 app:// 伺服层
         run: npm run smoke
+
+      # 打包失败时的排查依据：确认 Electron 的二进制到底有没有下下来。
+      # 背景：npm 上的 electron 包本体只有约 1MB，真正的 Chromium 内核（约 100MB）
+      # 由 @electron/get 在 postinstall 阶段另行下载。若这一步没跑成，
+      # electron-builder 会因为找不到发行版而在几秒内直接退出。
+      - name: 诊断 Electron 安装状态
+        shell: pwsh
+        run: |
+          Write-Host "node: $(node --version)   npm: $(npm --version)"
+          Write-Host "npm_config_electron_mirror = '$env:npm_config_electron_mirror'"
+          Write-Host "ELECTRON_MIRROR = '$env:ELECTRON_MIRROR'"
+          Write-Host "--- node_modules\electron 内容 ---"
+          if (Test-Path node_modules\electron) {
+            Get-ChildItem node_modules\electron -Force | Select-Object Name, Length | Format-Table -AutoSize
+            Write-Host "electron dist 目录存在: $(Test-Path node_modules\electron\dist)"
+            Write-Host "electron.exe 存在:      $(Test-Path node_modules\electron\dist\electron.exe)"
+            if (Test-Path node_modules\electron\path.txt) {
+              Write-Host "path.txt: $(Get-Content node_modules\electron\path.txt -Raw)"
+            }
+          } else {
+            Write-Host "!! node_modules\electron 不存在 —— 依赖没装上"
+          }
+          Write-Host "--- electron 版本 ---"
+          node -e "try{console.log('electron 包:', require('electron/package.json').version)}catch(e){console.log('读不到 electron/package.json:', e.message)}"
+          Write-Host "--- electron-builder 版本 ---"
+          # 这一项失败不让整个步骤挂掉：诊断步骤的职责是"把信息打出来"，
+          # 真正的失败应该由后面的「打包 exe」暴露，免得被这里掩盖。
+          npx --no-install electron-builder --version
+          if ($LASTEXITCODE -ne 0) { Write-Host "!! electron-builder 不可用（退出码 $LASTEXITCODE）" }
+          exit 0
 
       - name: 打包 exe
         run: npm run dist
