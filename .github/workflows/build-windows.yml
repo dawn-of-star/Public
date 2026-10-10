@@ -28,12 +28,12 @@ jobs:
   build-windows:
     runs-on: windows-latest
 
-    # 项目根目录的 .npmrc 里把 Electron 下载源指向了 npmmirror（国内直连 GitHub
-    # Releases 会卡死在 0 字节）。GitHub 的构建机直连 GitHub 最快，所以这里用
-    # npm_config_* 环境变量显式覆盖回去 —— 环境变量的优先级高于 .npmrc。
-    env:
-      npm_config_electron_mirror: https://github.com/electron/electron/releases/download/
-      npm_config_electron_builder_binaries_mirror: https://github.com/electron-userland/electron-builder-binaries/releases/download/
+    # ⚠️ 不要在这里用 npm_config_electron_mirror 覆盖 Electron 下载源。
+    # 曾经覆盖回 github.com/electron/electron/releases/download/，理由是
+    # 「GitHub 的构建机直连 GitHub 最快」—— 实测这个假设不成立：
+    # v0.6.5 / v0.6.17 / v0.6.18 三次构建**全部**死在「安装依赖」这一步，
+    # 因为 electron 的 postinstall 要下 ~100MB 二进制，从 GitHub Releases 拉会卡住。
+    # 现在交给项目根目录的 .npmrc（npmmirror）—— 那是已验证 400ms 内响应的源。
 
     steps:
       - name: 检出代码
