@@ -32,7 +32,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 /** 网页版需要的文件 / 目录（相对项目根）。改这里要同步改 package.json 的 build.files。 */
-const FILES = ["index.html", "css", "src", "dist"];
+// package.json 是给界面读版本号用的：index.html 里有一段内联脚本 fetch 它，
+// 拿 version 去更新 <title> 与顶栏，这样版本号只有 package.json 一个出处。
+// 它只含 name/version/scripts/devDependencies，没有任何机密；仓库本身也是公开的。
+const FILES = ["index.html", "css", "src", "dist", "package.json"];
 
 const PROJECT_ROOT = path.join(__dirname, "..");
 const outDirName = process.argv[2] ?? "_site";
