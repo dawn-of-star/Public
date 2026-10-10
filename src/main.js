@@ -440,6 +440,8 @@ window.__game = {
 };
 
 console.log(
-  "%c[空想增量 v0.6.17]%c 控制台可用 window.__game 调试（.state / .advance(秒) / .reset()）",
+  // 版本号由 index.html 的内联脚本从 package.json 读出后广播到 window（见那里的注释）。
+  // 它是异步取的，极端情况下可能还没到 —— 那就退化成不带版本号的横幅，不影响调试。
+  `%c[空想增量${window.__APP_VERSION ? " v" + window.__APP_VERSION : ""}]%c 控制台可用 window.__game 调试（.state / .advance(秒) / .reset()）`,
   "color:#2fa6f7;font-weight:bold", "color:#757575",
 );

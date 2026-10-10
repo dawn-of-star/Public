@@ -3,8 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>空想增量 demo
-</title>
+<title>空想增量 0.6.18</title>
 <link rel="stylesheet" href="./css/amoled.css">
 <!--
   这里**不需要** <script src="dist/break_eternity.min.js"> 了。
@@ -14,6 +13,28 @@
 
   想看原稿版本 → 打开 legacy/index.html（它用 legacy/js/ 和全局 Decimal）
 -->
+-->
+  <!--
+    版本号【不写死】：运行时读 package.json 的 version，把标题与顶栏的版本占位符
+    都替换掉。这样升级版本时只需要改 package.json 一处，界面自动跟随，不会漏改。
+    fetch 失败（离线打开、协议不支持）时静默保留 HTML 里的兜底值，不影响游玩。
+    注意：这里必须用内联脚本，不能进 ./src/main.js —— 那段是 module，
+    DOMContentLoaded 之后再加载会来不及在首帧更新标题（会闪一下旧值）。
+  -->
+  <script>
+    fetch("./package.json")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((p) => {
+        if (!p || !p.version) return;
+        document.title = "空想增量 " + p.version;
+        const el = document.getElementById("app-ver");
+        if (el) el.textContent = p.version;
+        // 广播给模块代码用（src/main.js 的控制台横幅读它）⇒ 版本号全项目只有
+        // package.json 一个出处，任何地方都不用写死。
+        window.__APP_VERSION = p.version;
+      })
+      .catch(() => {});
+  </script>
 </head>
 <body>
 
@@ -21,7 +42,7 @@
 
   <!-- ══════════ 顶栏 ══════════ -->
   <div class="topbar">
-    <h1>空想增量 <small>demo· AMOLED</small></h1>
+    <h1>空想增量 <small><span id="app-ver">0.6.18</span> · AMOLED</small></h1>
     <div class="spacer"></div>
     <div class="tools">
       <button class="tool" id="btn-save">保存</button>

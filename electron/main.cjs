@@ -32,7 +32,9 @@ function createWindow() {
     height: 880,
     minWidth: 880,
     minHeight: 600,
-    title: "空想增量 demo",
+    // 版本号不写死：app.getVersion() 读的就是 package.json 的 version，
+    // 升级版本时这里自动跟随，不会漏改。
+    title: `空想增量 ${app.getVersion()}`,
     backgroundColor: "#000000", // AMOLED，避免启动时白闪
     autoHideMenuBar: true,
     show: false,                // 等首帧画好再显示，避免白屏
