@@ -97,7 +97,10 @@ body {
 */
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1.15fr);
+  /* ★ 2025：原来两列（左列 5 张卡 / 右列标签页）。用户要求「左侧的主页面也最好并入
+     右侧列表，标题为主控台」⇒ 那 5 张卡并进了标签页的第一个面板 `#panel-console`，
+     于是只需要**一列**。右列的壳仍在 DOM 里（留着不碍事），单列后它自然空掉。 */
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--gap);
   align-items: start;
 }
@@ -108,21 +111,51 @@ body {
   （窄屏单列时关掉，见下面的 900px 断点。）
 */
 @media (min-width: 901px) {
-  .layout > .col:first-child {
+  /* ★ 2025：**粘性对象 = 标签栏本身**（.tabs），不是整张卡。
+     沿革：原来粘"第一列"（左列 5 张卡）→ 5 张卡并进标签页后布局只剩一列，
+     改粘"标签页那张卡"→ 但卡里现在有 8 个面板、高度远超视口，
+     `position: sticky` 在元素高过滚动容器时**基本不粘** ✗ ⇒ 滚下去就看不到标签了。
+     ⇒ 只把**标签栏**粘住即可（它只有一行高）✓
+     ⚠️ 刻意**不给它 overflow** —— 踩过的坑：`.tabs` 一旦成为滚动容器，
+        绝对定位的**子页浮出层会被裁掉**（dom-smoke 有专门断言守这条 ✗）。 */
+  .tabs {
     position: sticky;
-    top: var(--gap);
-    max-height: calc(100vh - var(--gap) * 2);
-    overflow-y: auto;
+    top: 0;
+    z-index: 5;
+    /* 粘住时必须有不透明底，否则下面的内容会透过来（AMOLED 黑底 + 卡片色） */
+    background: var(--bg-card);
   }
-  /* 左列自带滚动条时，别用系统亮色（AMOLED 黑底上很刺眼）—— 和日志面板同一套 */
-  .layout > .col:first-child::-webkit-scrollbar { width: 7px; }
-  .layout > .col:first-child::-webkit-scrollbar-track { background: transparent; }
-  .layout > .col:first-child::-webkit-scrollbar-thumb { background: var(--line-strong); border-radius: 4px; }
 }
 @media (max-width: 900px) {
   .layout { grid-template-columns: 1fr; }
 }
 .col { display: flex; flex-direction: column; gap: var(--gap); min-width: 0; }
+
+/* ══════════════ N.E.K.O 子页（两列）══════════════
+   ★★★ 2025（用户裁定）：「neko 页面由于要有**对话功能**，建议子页面下分出两列（左侧和右侧）」
+     · 左列 = 好感度 / 档位阶梯 / 道具（游戏侧数据）
+     · 右列 = 对话（接入 SDK 后填充；未接入时是占位）
+   ⚠️ 复用 `.col` 的卡片流 ⇒ 不必新造卡片样式 ✓
+   ⚠️ 900px 以下退化成单列（与 `.inf-grid` 同一套断点）*/
+.neko-cols {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);   /* 左窄右宽：对话区要更宽 */
+  gap: var(--gap);
+  align-items: start;
+}
+@media (max-width: 900px) { .neko-cols { grid-template-columns: 1fr; } }
+
+/* 对话区的消息流（等 SDK 接入后填充；现在只有占位） */
+.neko-chat { display: flex; flex-direction: column; gap: 8px; min-height: 180px; }
+.neko-msg { padding: 8px 10px; border-radius: var(--radius); border: 1px solid var(--line); }
+.neko-msg.her { background: var(--bg-card); }
+.neko-msg.you { background: transparent; border-style: dashed; color: var(--text-dim); }
+
+/* 子页壳子占位（梦想页：用户「目前允许只有个壳子」） */
+.shell-note {
+  padding: 22px 16px; border: 1px dashed var(--line-strong); border-radius: var(--radius);
+  color: var(--text-dim); text-align: center; line-height: 1.9;
+}
 
 /* ══════════════ 资源条 ══════════════ */
 

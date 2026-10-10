@@ -1,0 +1,135 @@
+/**
+ * tools/post-break-runaway-lab.mjs —— **打破无限 → 永恒 这一段为什么会爆**（拉表）
+ *
+ * 目的：把该段的**全部加速环节**按现行公式摆出来，逐秒拉表，看清 runaway 的来源。
+ *
+ * ── 该段的四条加速链（全部按现行实现）──
+ *   ① 暗能量自增长：`d log10(DE)/dt = a(DE) × (1 + 0.1×引擎等级)`
+ *        a(DE) = max(a0·2^(−(log10DE − aKnee)/aHalving), a0·aFloor)   ← 有下限 ⇒ 永不停摆
+ *   ② 跨度层：`物质产出 × (DE / DE_base)^k`，`k = min(1 + kCoeff·√q, kMax)`（上限 6.1651）
+ *        注意：**这是"DE 的 k 次方"** ⇒ 若 log10(DE) 线性增长，则 log10(物质) 也线性，
+ *        但斜率被乘上 k（最高 6.17）✗
+ *   ③ 引擎等级：价格 `5 × 2^等级` ⇒ 可买到的等级 ≈ log2(IP/5)
+ *        而 IP 来自大坍缩（深度复利）⇒ IP 涨 ⇒ 等级涨
+ *   ④ 引擎等级又反过来喂：暗能量倍率 ×2^等级、ZPE 倍率 ×2^等级、DE 自增长 ×(1+0.1·等级)
+ *        ⇒ ①③④ **闭合成环**：等级 ↑ ⇒ DE ↑ ⇒ IP ↑ ⇒ 等级 ↑ ✗
+ *
+ * ── 结论预告 ──
+ *   单独看每一条都"温和"（对数 / 线性），但 ①×②×③ 相乘之后，
+ *   **log10(物质) 的每秒增量会随时间上升** ⇒ 存在 runaway（不是线性爆炸，是"加速的加速"✗）
+ *
+ * 用法：node tools/post-break-runaway-lab.mjs [--check]
+ */
+import { BREAK_INFINITY, DE_SPAN, QUANTUM } from "../src/config.js";
+
+const pad = (s, n) => String(s).padEnd(n);
+const check = process.argv.includes("--check");
+
+// ── 现行参数（单一数据源：全部从 config 读 ✓）──
+const A0 = DE_SPAN.a0, AKNEE = DE_SPAN.aKnee, AHALF = DE_SPAN.aHalving, AFLOOR = DE_SPAN.aFloor;
+const KCOEFF = DE_SPAN.kCoeff, KMAX = DE_SPAN.kMax;
+const ENGINE_BASE = 5;                       // 引擎价格 5 × 2^等级
+const DE_BASE_LOG = 50;                      // 门槛压平时的暗能量水位（k 的基准，见「跨度层」）
+
+/** ① 暗能量自增长的瞬时速率（阶/秒） */
+const aOf = (deLog) => Math.max(A0 * Math.pow(2, -(deLog - AKNEE) / AHALF), A0 * AFLOOR);
+const deRate = (deLog, level) => aOf(deLog) * (1 + 0.1 * level);
+
+/** ② 跨度层：物质产出的倍率（以 10 的幂表示，返回"阶"） */
+const spanLog = (deLog, q) => {
+  const k = Math.min(1 + KCOEFF * Math.sqrt(Math.max(0, q)), KMAX);
+  return k * Math.max(0, deLog - DE_BASE_LOG);
+};
+
+/** ③ 等级：价格 5×2^等级 ⇒ 用 IP 能买到的等级 */
+const levelFromIP = (ip) => Math.max(0, Math.log2(Math.max(1, ip) / ENGINE_BASE));
+/** IP 的深度复利（现行公式的近似：以"跨过的阶数"为深度） */
+const ipFromDepth = (depth) => Math.pow(depth / BREAK_INFINITY.maxLog10, 2) *
+  Math.pow(10, BREAK_INFINITY.depthCompound * Math.max(0, depth - BREAK_INFINITY.maxLog10));
+/** 量子：ZPE 每过 1e10×(20·stepMult)^n 给一对，每对 +2 */
+const qFromZpeLog = (zpeLog) => 2 * Math.max(0, Math.floor((zpeLog - 10) / Math.log10(QUANTUM.zpeCostGrowth)));
+
+// ── 仿真：每 30 秒一个大坍缩（现实节奏 ~12 分钟/次，这里给"更快"的乐观口径）──
+const CRUNCH_S = 720;            // 12 分钟一次大坍缩
+const DEPTH_PER_CRUNCH = 108;    // 破∞后每档约跨 108 阶（起点 1e200 → 上限 1e308）
+const MINUTES = 90;
+
+let deLog = DE_BASE_LOG, q = 0, ip = 0, level = 0, totalIP = 0;
+console.log("=".repeat(108));
+console.log("打破无限 → 永恒：逐段拉表（每 12 分钟一次大坍缩，IP 全买引擎等级）");
+console.log("=".repeat(108));
+console.log(`  ${pad("时间", 8)}${pad("log10(DE)", 11)}${pad("引擎等级", 10)}${pad("k", 7)}${pad("log10(跨度)", 12)}${pad("log10(物质)", 13)}${pad("物质阶/秒", 11)}备注`);
+let lastMatterLog = 0, lastT = 0;
+let growing = 0;
+for (let t = 0; t <= MINUTES * 60; t += 30) {
+  // DE 自增长（30 秒一步）
+  deLog += deRate(deLog, level) * 30;
+  // 量子（由 ZPE 门槛推；这里用 DE 的水位做代理，只为演示耦合）
+  q = Math.max(q, qFromZpeLog(deLog));
+  // 跨度层给的"物质阶数"
+  const mLog = spanLog(deLog, q) + 25;      // +25：基础链已推到的物质阶数
+  if (t > 0 && t % CRUNCH_S === 0) {
+    // 大坍缩：拿 IP（深度复利）⇒ 升级引擎
+    ip = ipFromDepth(DEPTH_PER_CRUNCH).toExponential ? ipFromDepth(DEPTH_PER_CRUNCH) : ipFromDepth(DEPTH_PER_CRUNCH);
+    totalIP += ip;
+    ip = totalIP;
+    level = levelFromIP(ip);
+  } else if (t > 0) {
+    ip = totalIP;
+  }
+  if (t % 300 === 0) {
+    const perSec = t > 0 ? (mLog - lastMatterLog) / (t - lastT) : 0;
+    if (perSec > 1) growing++;
+    const note = perSec > 10 ? "✗ 每秒翻 10 阶以上" : perSec > 1 ? "✗ 每秒 1 阶以上" : "";
+    console.log(`  ${pad((t / 60).toFixed(1) + " 分", 8)}${pad(deLog.toFixed(2), 11)}${pad(level.toFixed(2), 10)}${pad(Math.min(1 + KCOEFF * Math.sqrt(q), KMAX).toFixed(3), 7)}${pad(spanLog(deLog, q).toFixed(1), 12)}${pad(mLog.toFixed(1), 13)}${pad(perSec.toFixed(2), 11)}${note}`);
+    lastMatterLog = mLog; lastT = t;
+  }
+}
+console.log();
+
+console.log("=".repeat(108));
+console.log("① 每一环单独看有多「温和」（取 1 小时处的瞬时值）");
+console.log("=".repeat(108));
+const de60 = DE_BASE_LOG + deRate(DE_BASE_LOG, 30) * 3600;
+console.log(`  ${pad("环节", 22)}${pad("形式", 30)}1 小时后`);
+console.log(`  ${pad("DE 自增长", 22)}${pad("d log10(DE)/dt = 常数(带下限)", 30)}${pad(deRate(DE_BASE_LOG, 30).toFixed(5) + " 阶/秒", 12)}⇒ log10(DE) ≈ ${de60.toFixed(1)}`);
+console.log(`  ${pad("跨度层", 22)}${pad("×(DE/基准)^k", 30)}log10(跨度) = ${spanLog(de60, 60).toFixed(1)} 阶`);
+console.log(`  ${pad("引擎等级", 22)}${pad("≈ log2(IP/5)", 30)}吃 IP 的**对数** ⇒ 本身很温和 ✓`);
+console.log();
+console.log("② 但相乘之后：log10(物质) 的**斜率** = k × d log10(DE)/dt");
+console.log(`   k = ${KMAX}（封顶）时：斜率 = ${(KMAX * deRate(DE_BASE_LOG, 30)).toFixed(5)} 阶/秒 ⇒ 每小时 ${(KMAX * deRate(DE_BASE_LOG, 30) * 3600).toFixed(1)} 阶`);
+console.log(`   ⚠️ 而 DE 自增长里的 (1 + 0.1×等级) 会随等级上升 ⇒ 斜率**自身也在涨** ✗`);
+for (const lv of [0, 50, 100, 200, 400]) {
+  console.log(`     等级 ${pad(lv, 5)}⇒ 斜率 ${(KMAX * deRate(DE_BASE_LOG, lv)).toFixed(5)} 阶/秒 ｜ 每小时 ${(KMAX * deRate(DE_BASE_LOG, lv) * 3600).toFixed(0)} 阶`);
+}
+console.log();
+console.log("⇒ **runaway 的定义**：log10(物质) 的二阶导 > 0（斜率随时间涨 ✗）");
+console.log(`   实测：等级 0 → 400，斜率涨了 ${(deRate(DE_BASE_LOG, 400) / deRate(DE_BASE_LOG, 0)).toFixed(1)} 倍 ✗`);
+console.log(`   而 1e308 的物质上限只需 ${BREAK_INFINITY.maxLog10.toFixed(0)} 阶 ⇒ 等级高时**几分钟就跨完** ✗`);
+
+if (check) {
+  console.log();
+  console.log("=".repeat(108));
+  console.log("定点断言");
+  console.log("=".repeat(108));
+  let fails = 0;
+  const ck = (label, ok, detail) => {
+    if (!ok) fails++;
+    console.log(`  ${ok ? "✅" : "❌"} ${pad(label, 44)} ${detail}`);
+  };
+  ck("★ 暗能量自增长有下限 ⇒ 永不停摆（但也永不减速 ✗）",
+    aOf(1e6) > 0 && Math.abs(aOf(1e6) - A0 * AFLOOR) < 1e-12, `a(1e6 阶) = ${aOf(1e6).toExponential(3)} > 0`);
+  ck("★ 跨度层的幂次封顶 kMax", Math.abs(Math.min(1 + KCOEFF * Math.sqrt(1e9), KMAX) - KMAX) < 1e-12,
+    `k(极大 q) = ${KMAX}`);
+  ck("★ runaway：斜率随等级单调上升（二阶导 > 0）",
+    deRate(DE_BASE_LOG, 400) > deRate(DE_BASE_LOG, 0) * 10,
+    `等级 0→400 ⇒ ×${(deRate(DE_BASE_LOG, 400) / deRate(DE_BASE_LOG, 0)).toFixed(0)}`);
+  ck("★ 该段跨完 308 阶所需时间随等级下降（越高越快 ✗）",
+    BREAK_INFINITY.maxLog10 / (KMAX * deRate(DE_BASE_LOG, 400)) < BREAK_INFINITY.maxLog10 / (KMAX * deRate(DE_BASE_LOG, 0)),
+    `${(BREAK_INFINITY.maxLog10 / (KMAX * deRate(DE_BASE_LOG, 400)) / 60).toFixed(1)} 分 vs ${(BREAK_INFINITY.maxLog10 / (KMAX * deRate(DE_BASE_LOG, 0)) / 60).toFixed(1)} 分`);
+  ck("★ 引擎等级吃 IP 的对数（本身温和）", Math.abs(levelFromIP(5 * Math.pow(2, 100)) - 100) < 1e-9,
+    `IP = 5·2^100 ⇒ 等级 ${levelFromIP(5 * Math.pow(2, 100))}`);
+  console.log();
+  console.log(`  ${fails === 0 ? "全部通过 ✅" : `${fails} 项失败 ❌`}`);
+  process.exit(fails ? 1 : 0);
+}

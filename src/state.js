@@ -9,7 +9,11 @@
  */
 
 import Decimal from "../dist/break_eternity.esm.js";
-import { BASE, DE_MILESTONES, DE_UPGRADES, REPEATABLE, VOID_UPGRADES, ZPE_MILESTONES } from "./config.js";
+import { BASE, DE_MILESTONES, DE_UPGRADES, QUANTUM_MILESTONES, REPEATABLE, VOID_UPGRADES, ZPE_MILESTONES, quantumZpeMultBonus, ETERNITY, eternityPointGain, tierMilestonesDone, COLLAPSE, crunchThreshold, CRUNCH_AT_LABEL,
+  // ★ 2025：旧档迁移要用（`eternityCount > 0` ⇒ 补全页面解锁记录）
+  PAGE_KEYS,
+  // ★★★ 2025（`docs/NEKO.md` §7）：好感度的范围常量（反序列化时要夹，防手改存档 ✗）
+  NEKO } from "./config.js";
 
 const D = (v) => new Decimal(v ?? 0);
 
@@ -29,21 +33,31 @@ export function newState() {
       entropy: D(0),
       particle: D(0),
       matter: D(0),
-      traps: D(0),
-    },
+      traps: D(0) },
+
+    // ★ 补回：stats 块原本是单行、且含 coinage 字段 ⇒ 删铸币时整行被删掉 ✗
+    //   字段清单以**反序列化**处为准（clicks / totalEntropy ✓）
+    stats: { clicks: 0, totalEntropy: D(0) },
 
     // ── 可重复升级的等级（价格从 config 推导，不存） ──
     levels: {
       particleBoost: D(0),
       matterBoost: D(0),
-      entropyCoeff: D(0),
-    },
+      entropyCoeff: D(0) },
 
     // ── 一次性购买标记 ──
     voidUpgrades: Object.fromEntries(Object.keys(VOID_UPGRADES).map((k) => [k, false])),
+    // ★★ 2025：「曾经解锁过的页面」—— **永不重置**（见字段说明；用户裁定第一次永恒后保持解锁）
+    pageUnlocked: {},
 
     // ── 里程碑 ──
     zpeMilestones: Object.fromEntries(ZPE_MILESTONES.map((m) => [m.id, false])),
+    /**
+     * ★ 量子里程碑（2025 草案）：键在**累计量子对数**上（大坍缩不清零），
+     * **永恒会清除**（用户指定：与"除梦想系统外一切重置"一致）。
+     * 见 docs/QUANTUM-MILESTONES.md。
+     */
+    quantumMilestones: Object.fromEntries(QUANTUM_MILESTONES.map((m) => [m.id, false])),
     deMilestones: Object.fromEntries(DE_MILESTONES.map((m) => [m.id, false])),
 
     // ── ZPE ──
@@ -74,8 +88,69 @@ export function newState() {
     // ── 第四层：大坍缩 ──
     // ★ `darkMatter` / `collapseCount` / `collapseThreshold` 已删除 ——
     //   「临界坍缩 + 暗物质」整个体系被移除（见 engine.js 的说明）。
+    // ★ 补回：量子相关字段（删铸币时同一行被连带删掉 ✗）
+    quantum: D(0),
+    quantumPairs: D(0),
+    peakQuantumRun: D(0),
+    totalQuantumPairs: D(0),
+    // ★ 批量补回（删铸币的连带损伤 ✓ 按反序列化清单推定类型 ✓）
+    // ⚠️ 2025：`accelLevel` 已随「坍缩加速器」整个删除 ⇒ 不再有这个字段。
+    //    老存档里若还有它，反序列化时会被忽略（不报错 ✓）
+    dreamAwarded: {},
+    dreamUpgrades: {},
+    eternityCount: 0,
+    eternityPoints: D(0),
+    /**
+     * ★★ 2025：**累计获得**的永恒点（只增不减）—— em5 的读数源。
+     *
+     * 为什么不用 `eternityPoints`（当前持有）：永恒升级会**花掉** EP ⇒
+     * `log10(EP)` 随之掉下来、甚至归零（`log10(0) = -Infinity`）⇒
+     * em5 的加成会**随消费反复丢失**，里程碑等于白拿 ✗
+     * 与 AD 的手法一致（累计量做加成的键：`totalAMMult` vs `currentAMMult`）。
+     */
+    eternityPointsTotal: D(0),
+    /**
+     * ★★★ 2025（第三层设计稿 33~35 行）：**永恒升级「永恒增幅」的等级**。
+     *
+     * 效果 = 最终获得的永恒点 ×5/级（`epMultFactor(state)`，唯一入口见 config.js）。
+     * ⚠️ 它**不随永恒重置**（永恒升级本来就是跨永恒的进度）——
+     *    所以 `doEternity` / `resetForEternity` 里**不要**清它 ✓
+     */
+    epMultLevel: 0,
+    /**
+     * ★★★ 2025（`docs/NEKO.md` §7 / §10）：**好感度系统**（游戏原生，零依赖 SDK）。
+     *
+     * · `nekoAffinity`：当前好感度。规格 = 初始 **0**、范围 **[-100, 100]**、
+     *   档位判定看"是否 **> 25 / > 50 / > 75**"（三档叠乘 ⇒ 全局 ^最高 1.0221151）
+     * · `nekoDriftStamps`：**窗口预算**用的时间戳数组 `[[ms, delta], …]`
+     *   —— 保证"每 5 分钟波动 < 8 点"（接入 SDK 后 < 16）✓
+     * ⚠️ 这两个字段**不随任何重置清空**（好感度是跨轮次的长期进度）——
+     *   所以 `doBigCrunch` / `doEternity` 里**不要**清它 ✓
+     */
+    nekoAffinity: 0,
+    nekoDriftStamps: [],
+    infinityElapsed: 0,
+  // ★ 2025: 本轮时长（秒）—— 收手判据按时间；每次大坍缩归零（见 engine.js）
+  runElapsed: 0,
+    infinityFromQuantumBought: false,
+    ipTimeAccrued: 0,
+    ipTimeBought: false,
+    ipToTransmuterBought: false,
+    ipToZpeBought: false,
+    pairBoostBought: false,
+    quantumPairsTotal: D(0),
+    speedBought: {},
+    startBought: {},
+    thresholdFlatBought: false,
+    v9: false,
+    zpeEngineLevel: D(0),
+    zpeEngineUnlocked: false,
+    // ★ 从代码扫描补回（删铸币连带损伤 ✓）
+    deAccum: D(0),
     /** 无限点（大坍缩给） */
     infinityPoints: D(0),
+    /** ★ 补回：删铸币时被连带删掉的梦想点字段 ✗（globalMultiplier 依赖它 ✓） */
+    dreamPoints: D(0),
     /** 已大坍缩次数 */
     bigCrunchCount: D(0),
     /**
@@ -84,102 +159,30 @@ export function newState() {
      * true  = 上限解除，手动大坍缩，收益随深度增长
      */
     brokenInfinity: false,
+    /**
+     * ★ 跨度层基准（`D(0)` = 尚未开启）。
+     *
+     * 买下「门槛压平」时记下**当时的暗能量水位**，跨度乘数取
+     * `(DE / spanDeBase)^k` —— 好处：
+     *   · 购买瞬间乘数恰好 = 1（连续、无跳变）
+     *   · 早期根本买不到该升级 ⇒ 乘数恒 1 ⇒ **不伤前期**
+     *   · 基准由玩家的购买时刻确定，**不需要我发明一个魔法常数**
+     * 见 docs/R-REPLACEMENT.md §11。
+     */
+    spanDeBase: D(0),
     /** 历史最高物质（用于显示和里程碑判定） */
     peakMatter: D(0),
 
     // ── ∞ 层：无限升级（用无限点买，不随大坍缩重置）──
     /** ① 无限增幅：无限点收益 ×2 的等级 */
     ipDoubleLevel: D(0),
+  ic: { active: D(0), completed: 0 },
     /**
      * ★ 无限铸币等级（**设计未冻结：用户保留最终修改权**）。
-     * 效果：所有无限点收入 ×`COINAGE.effectPerLevel^等级`。
-     * ⚠️ **硬性受档位闸门约束**：`等级 ≤ 30 × 大坍缩次数`（见 `config.coinageCap`）。
      *    这是"24 小时档"的节流阀 —— 只卡铸币上限而其它 IP 循环不设限是无效的（模型实测）。
      */
-    coinageLevel: D(0),
-    /** ★ 量子铸币是否已买（一次性，100 IP） */
-    infinityFromQuantumBought: false,
-    /** 三条单次 ∞ 升级（原稿候选）：门槛压平 / 涨落增幅 / 未花 IP 加产率 */
-    thresholdFlatBought: false,
-    pairBoostBought: false,
-    unspentBoostBought: false,
-    /** 本次无限（大坍缩区间）内达到过的**最大量子数** —— 量子铸币的收益基数 */
-    peakQuantumRun: D(0),
-    /**
-     * ★ 坍缩加速器等级（花无限点）：让**成长速率** ×1.02/级，效果硬封顶 ×2。
-     * 一次大坍缩的耗时与成长速率严格成反比 ⇒ 每级约省 2% 时间。
-     */
-    accelLevel: D(0),
-    /** ② 零点耦合：无限点 → ZPE 倍率加法区（一次性） */
-    ipToZpeBought: false,
-    /** ③ 相变超频：无限点 → 相变仪速率（一次性） */
-    ipToTransmuterBought: false,
-    /** ④ 无限长河：本次无限的耗时换无限点（一次性） */
-    ipTimeBought: false,
-    /** 「起点跃迁 I~IV」已购标记（id -> true）：决定每次大坍缩的开局物质 */
-    startBought: {},
-    /** 「速率解放 I~IV」已购标记（id -> true）：抬高量子成长速率上限 */
-    speedBought: {},
-    /**
-     * 本次无限已经过去的秒数（④ 的计量口径）。
-     * tick 每帧累加、大坍缩清零 —— 和离线结算同源，不依赖 wall clock。
-     */
-    infinityElapsed: 0,
-    /**
-     * 本次无限里 ④「无限长河」**实时进账**了多少点（仅供日志/界面显示）。
-     *
-     * ④ 是实时产点的（对齐 AD 的 ipGen），所以"本次拿了多少"不能再由 `infinityElapsed` 反推
-     * —— 中途买了 ① 的话速率会变，反推会算错。
-     * 上限就是那一笔：`min(耗时, 1800) ÷ 60 × 3^①等级`。大坍缩时归零。
-     */
-    ipTimeAccrued: 0,
-    /**
-     * ZPE 引擎（打破无限后 · 虚空系统子页）：解锁价 10 无限点，之后拿无限点买等级。
-     * 三条机制（抬公式指数 / 按等级提速产出 / 让倍率吃计数频率）都由等级驱动，
-     * 见 config 的 `ZPE_ENGINE`。
-     */
-    zpeEngineUnlocked: false,
-    zpeEngineLevel: new Decimal(0),
-    /**
-     * 永恒层（**先占位**）：永恒点与已永恒次数。
-     * 门槛 = 无限点 1e308.25；点公式照 AD（见 config 的 `ETERNITY`）。
-     * ⚠️ 不强制触发 —— 到门槛也不会自动重置（强制坍缩只存在于物质层）。
-     */
-    eternityPoints: new Decimal(0),
-    eternityCount: 0,
-
-    // ── 量子（第三版模型：ZPE 门槛捕获）──
-    /** 当前量子数量（每捕获一对 +2） */
-    quantum: new Decimal(0),
-    /** 已捕获对数（决定下一对的门槛，×10 递增） */
-    quantumPairs: new Decimal(0),
-    /** 历史累计捕获对数（统计用，大坍缩后保留） */
-    quantumPairsTotal: new Decimal(0),
-    /** 梦想点一次性升级（量子页）：已购 id -> true */
-    dreamUpgrades: {},
-    /**
-     * 相变仪进度：距离下一次「1e8 ZPE → 暗能量」还攒了多少 ZPE。
-     * **只用于显示那个环**（实际转换是连续除法，不走累加器）。
-     */
-    deAccum: new Decimal(0),
-
-    // ── 梦想点：成就系统 ──
-    /**
-     * 设计本意：取代 AD 的成就系统。
-     * 每获得一个**非重复**的加成（升级 / 里程碑 / 新机制）就 +1，永不重置。
-     * 它同时是全局加成的来源（1 + 梦想点 × 系数）。
-     */
-    dreamPoints: D(0),
-    /** 已经给过梦想点的加成 key，防止重复发 */
-    dreamAwarded: {},
-    // ── 统计（顺便给日志面板用） ──
-    stats: {
-      clicks: 0,
-      totalEntropy: D(0),
-    },
     /** 日志缓冲，最近 N 条 */
-    log: [],
-  };
+    log: [] };
 }
 
 // ══════════════════════════════════════════════════════════
@@ -249,10 +252,27 @@ export function deLevelOf(state, id) {
 
 const LOG_MAX = 60;
 
+/**
+ * ★★★ 2025（`docs/NEKO.md` §9）：**日志的额外出口**（宿主桥）。
+ *
+ * 为什么用"注册回调"而不是让 `state.js` 直接 import `neko.js`：
+ *   `pushLog` 有 **40+ 处调用点**，而它们全都只关心"记一条" ⇒
+ *   在这里挂一个可选回调，就能让**全部**日志自动流向宿主桥，
+ *   而**一处调用点都不用改** ✓（改 40 处必然漏，且会污染业务代码）
+ * ⚠️ 回调必须**永不抛**（日志失败不该影响游戏）—— 这里包了 try/catch 兜底，
+ *   但注册方也应自己吞异常（见 `neko.js` 的 `sendLog`）。
+ */
+let logSink = null;
+export function setLogSink(fn) { logSink = typeof fn === "function" ? fn : null; }
+
 /** ★ 原稿的 #log-panel 是死 UI（从没被写过）。这里补上。 */
-export function pushLog(state, text) {
-  state.log.push({ t: Date.now(), text });
+export function pushLog(state, text, data = undefined) {
+  const entry = { t: Date.now(), text };
+  if (data !== undefined) entry.data = data;   // ★ §9：可选的结构化附加数据
+  state.log.push(entry);
   if (state.log.length > LOG_MAX) state.log.splice(0, state.log.length - LOG_MAX);
+  // ★ 顺带推给宿主桥（无宿主时它是 no-op ✓）；失败绝不影响游戏
+  if (logSink) { try { logSink(entry); } catch { /* 忽略 */ } }
 }
 
 /**
@@ -272,6 +292,29 @@ export const KEY_LEVELS = (() => {
 /** 这个等级本身是不是关键节点 */
 export function isKeyLevel(n) {
   return KEY_LEVELS.includes(n);
+}
+
+/**
+ * ★★★ 2025（用户裁定）：**量子的日志节点 = `1 / 5 / 25 / 125 / 625 …`（纯 ×5）**。
+ *
+ * 用户原话：「顺手优化下量子的日志输出，每 1/5/25/125/625（以此类推）对量子输出」
+ *
+ * ⚠️ 为什么不复用 `KEY_LEVELS`（它是 ×5、×2 **交替**）：
+ *   那是给"重复购买类升级"用的（用户当年指定 1、5、10、50…）；
+ *   量子要的是**纯 ×5** 序列 ⇒ 两套判据**语义不同，不能混用** ✗
+ *   （混用会让日志在 2、10、50… 也冒出来，与用户要的序列不符）
+ *
+ * 上界 `1e18` 与 `KEY_LEVELS` 同族：再大就不可能在一局里达到（防除法/比较开销）✓
+ */
+export const QUANTUM_LOG_LEVELS = (() => {
+  const out = [];
+  for (let v = 1; v <= 1e18; v *= 5) out.push(v);
+  return out;
+})();
+
+/** 这一对数量是不是量子日志的关键节点 */
+export function isQuantumLogLevel(n) {
+  return QUANTUM_LOG_LEVELS.includes(n);
 }
 
 /** 从 `from` 买到 `to` 的过程中**跨过的最高关键节点**（没跨过返回 0） */
@@ -352,6 +395,8 @@ export function deserialize(raw) {
   const vu = raw.voidUpgrades ?? {};
   for (const k of Object.keys(fresh.voidUpgrades)) s.voidUpgrades[k] = bool(vu[k]);
 
+  const qm = raw.quantumMilestones ?? {};
+  for (const k of Object.keys(fresh.quantumMilestones)) s.quantumMilestones[k] = bool(qm[k] === true);
   const zm = raw.zpeMilestones ?? {};
   for (const k of Object.keys(fresh.zpeMilestones)) s.zpeMilestones[k] = bool(zm[k]);
 
@@ -390,19 +435,50 @@ export function deserialize(raw) {
 
   // ── ∞ 层：无限升级 ──
   s.ipDoubleLevel = dec(raw.ipDoubleLevel);
-  s.coinageLevel = dec(raw.coinageLevel);
+  s.ic = raw.ic ?? { active: D(0), completed: 0 };
   s.infinityFromQuantumBought = bool(raw.infinityFromQuantumBought);
   s.thresholdFlatBought = bool(raw.thresholdFlatBought);
   s.pairBoostBought = bool(raw.pairBoostBought);
-  s.unspentBoostBought = bool(raw.unspentBoostBought);
   s.peakQuantumRun = dec(raw.peakQuantumRun);
-  s.accelLevel = dec(raw.accelLevel);
+  // ⚠️ 2025：不再读 `raw.accelLevel`（坍缩加速器已删除）。老存档带着它也无害 —— 直接忽略 ✓
   s.ipToZpeBought = bool(raw.ipToZpeBought);
   s.ipToTransmuterBought = bool(raw.ipToTransmuterBought);
   s.ipTimeBought = bool(raw.ipTimeBought);
   s.startBought = raw.startBought && typeof raw.startBought === "object"
     ? Object.fromEntries(Object.entries(raw.startBought).filter(([, v]) => v === true))
     : {};
+  // ★★ 2025：**页面「曾经解锁过」的永久记录**（第一次永恒后保持解锁）
+  //   ⚠️ 必须进反序列化 —— 否则刷新一次存档就从"已解锁"退回"锁" ✗
+  //   只接受 `true`（与 startBought / speedBought 同一套写法）
+  s.pageUnlocked = raw.pageUnlocked && typeof raw.pageUnlocked === "object"
+    ? Object.fromEntries(Object.entries(raw.pageUnlocked).filter(([, v]) => v === true))
+    : {};
+
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2025 **页面解锁的兜底**（用户实测报告：「永恒后还是会重置页面」）
+  // ══════════════════════════════════════════════════════════
+  // 病根：`pageUnlocked` 是 2025 才加的字段，**加之前存的档里根本没有它**。
+  //   而 `markPageUnlocked` 只在"解锁那一刻"被打点 —— 旧档玩家早就过了那一刻
+  //   ⇒ 记录永远是空的 ⇒ 永恒（或任何清空内容的重置）之后页面退回"待推进" ✗
+  //
+  // ⇒ ★ **用户裁定**：「永恒次数若 > 1 则解锁永恒前所有页面」
+  //   ⚠️ 但实测证明**必须用 `> 0`**（我按字面改成 `> 1` 是错的 ✗）：
+  //     用户的档是 `eternityCount = 1` 且 `pageUnlocked = {}`（旧档）——
+  //     用 `> 1` 就**不补全** ⇒ 无限页（判据 `brokenInfinity`）与永恒页
+  //     （判据 `eternityCount > 0`）都变成 `perma=false` ⇒ 退回"待推进" ✗
+  //     而用 `> 0`：一次永恒即**证明**该档一路解锁过到永恒 ⇒ 补全全部 `PAGE_KEYS` ✓
+  //   ⇒ 用户真正要的语义是「**永恒之前解锁过的所有页面**」—— 那就包含"永恒"这一页本身，
+  //     判据就是"至少永恒过一次" = `> 0`。
+  //
+  //   ⚠️ 判据用 `raw.eternityCount`（**原始存档**），不是 `s.*` ——
+  //      避免把"后续补的默认值"误当成旧档证据。
+  //   ⚠️ 这是**载入时**的兜底：`deserialize` 只在读档时跑 ⇒ 活档期间的解锁
+  //      仍走 `markPageUnlocked`（那是"解锁那一刻"的正规打点）✓
+  const rawEternityCount = num(raw.eternityCount, 0);
+  if (rawEternityCount > 0) {
+    for (const k of PAGE_KEYS) s.pageUnlocked[k] = true;
+  }
+
   s.speedBought = raw.speedBought && typeof raw.speedBought === "object"
     ? Object.fromEntries(Object.entries(raw.speedBought).filter(([, v]) => v === true))
     : {};
@@ -412,6 +488,23 @@ export function deserialize(raw) {
   s.zpeEngineLevel = dec(raw.zpeEngineLevel);
   s.eternityPoints = dec(raw.eternityPoints);
   s.eternityCount = num(raw.eternityCount, 0);
+  // ★ 2025：累计 EP（em5 的读数源）。**旧存档没有这个字段** ⇒ 用当前持有量兜底
+  //   （旧档的持有量 ≥ 0，兜底后行为正常；新档从此只增不减 ✓）
+  s.eternityPointsTotal = raw.eternityPointsTotal != null
+    ? dec(raw.eternityPointsTotal)
+    : s.eternityPoints;
+  // ★★★ 2025：永恒升级「永恒增幅」的等级（新字段；旧档没有 ⇒ 默认 0 ✓）
+  s.epMultLevel = Math.max(0, num(raw.epMultLevel, 0));
+  // ★★★ 2025（`docs/NEKO.md` §7）：好感度（跨轮次长期进度；旧档默认 0 ✓）
+  //   ⚠️ 必须夹到 [NEKO.min, NEKO.max]（存档可被手改 ⇒ 不夹的话指数会失控 ✗）
+  s.nekoAffinity = Math.max(NEKO.min, Math.min(NEKO.max, num(raw.nekoAffinity, 0)));
+  // 窗口预算的时间戳：只接受 `[ms, delta]` 形状（防脏数据）
+  s.nekoDriftStamps = Array.isArray(raw.nekoDriftStamps)
+    ? raw.nekoDriftStamps
+      .filter((x) => Array.isArray(x) && x.length === 2 && Number.isFinite(Number(x[0])) && Number.isFinite(Number(x[1])))
+      .map((x) => [Number(x[0]), Number(x[1])])
+      .slice(-64)                                   // 环形上限：够 5 分钟窗口用，防存档膨胀
+    : [];
 
   // ── 量子 ──
   s.quantum = dec(raw.quantum);

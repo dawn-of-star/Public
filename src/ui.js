@@ -1,3 +1,9 @@
+import { OVERLOAD } from "./config.js";
+import { infinityUpgradeEffect } from "./engine.js";
+import { infinityUpgradeOwned } from "./config.js";
+import { infinityUpgradeCost } from "./config.js";
+import { BREAK_INFINITY } from "./config.js";
+import { quantumToIPGain } from "./config.js";
 /**
  * ui.js —— 所有 DOM 操作
  *
@@ -9,25 +15,46 @@
  */
 
 import Decimal from "../dist/break_eternity.esm.js";
+// ⚠️ 注意：`D` 由下面 `./config.js` 的 import 提供（第 39 行）⇒ **不要在这里再定义** ✗
+//   （我加过一个 `const D = ...`，触发 "Identifier 'D' has already been declared"）
+import { buildIcUI, renderIc } from "./ui-ic.js";
+// ★★★ 2025（`docs/NEKO.md`）：宿主探测（猫猫子页显示"接没接上"用）
+import { nekoHostPresent } from "./neko.js";
 import {
-  BASE, BREAK_INFINITY, COINAGE, COLLAPSE, DE_MILESTONES, DE_UPGRADES, ETERNITY, INFINITY_ORDER, INFINITY_UPGRADES, OVERLOAD, QUANTUM,
   REPEATABLE, VOID_UPGRADES, ZONES, ZONE_OF, ZPE_ENGINE, ZPE_EXPONENT, ZPE_MILESTONES,
-  CRUNCH_AT_LABEL, CRUNCH_ACCEL, DREAM_UPGRADES, TIER_MILESTONES, accelCost, accelLevel, accelMaxLevel, accelMult, coinageCap, coinageCost, coinageLevel, coinageMult, crunchThreshold, eternityPointGain, infinityUpgradeCost, infinityUpgradeOwned,
   overloadThreshold, quantumDeGainBonus, quantumDeMultBonus,
-  quantumEntropyMultiplier, quantumGrowthRate, quantumStepMult, quantumZpeRequirement,
-  tierRateMult, tierMilestonesDone, coinageCapPerCrunch, zoneOf,
-  zpeEngineCost, zpeEngineCountFreqUnlocked, zpeEngineExpBonus, zpeEngineLevel,
-  zpeEngineProdMult, zpeEngineUnlocked,
-} from "./config.js";
+  matterSpanExponent, matterSpanMult,
+  quantumEntropyMultiplier, quantumStepMult, quantumZpeRequirement,
+  zpeEngineCost, zpeEngineCountFreqUnlocked, zpeEngineAddBonus, zpeEngineMultBonus, zpeEngineLevel,
+  zpeEngineProdMult, zpeEngineUnlocked, quantumZpeMultBonus, qOf, zoneOf, TIER_MILESTONES, DE_UPGRADES, DE_MILESTONES, DREAM_UPGRADES, INFINITY_ORDER, INFINITY_UPGRADES, BASE, ETERNITY, eternityPointGain, ipDoubleMult, tierMilestonesDone, matterTotalExponent, MATTER_B_KNEE, MATTER_B_KMAX, COLLAPSE, crunchThreshold, CRUNCH_AT_LABEL, pageUnlocked, markPageUnlocked,
+  // ★★★ 2025：渲染时的**实时自愈**要遍历全部页面（见 `render` 开头）
+  PAGE_KEYS,
+  // ★ 2025：永恒里程碑（设计稿 36~44 行）
+  ETERNITY_MILESTONES, hasEternityMilestone, em5IpMult,
+  // ★★★ 2025：永恒升级「永恒增幅」（设计稿 33~35 行）
+  epMultFactor, epMultPriceAt, epMultAffordableIn, ETERNITY_UPGRADES,
+  // ★★★ 2025（`docs/NEKO.md` §7）：猫猫卡片 —— 与实发同源
+  nekoGlobalExponent, nekoNextTier, NEKO, nekoDriftRoom, NEKO_ITEMS,  // ★★★ 2025（设计稿第 24 行）：自动化状态卡要读"哪几条 DE 升级被自动买"
+  dreamUpgradeEffects,
+  // ★ 2025：引擎 5 条机制的参数（UI 文案要显示 A/knee/coeff，**从 config 取，不手写** ✗）
+  ENGINE_MECH,
+  // ★★★ 2025：① 无限增幅置顶行的渲染需要它
+  //   （用户报告"买一次后仍显示 ×1"—— 根因是那一行从没被渲染过，见 renderInfinity 的说明）
+  //   ⚠️ `INFINITY_UPGRADES` 上面第 29 行的 import 里**已经有了** ⇒ 别重复导入 ✗
+  ipDoubleAffordableIn,
+  // ★★★ 2025：量子面板必须含引擎账 ⇒ 显示 == 实发（见 renderQuantum 的说明）
+  engineBonusMult } from "./config.js";   // ★ 补回（删铸币时同行的 zoneOf 被连带删掉 ✗）
 import {
+  D,   // ★ 2025 修复：`D(0)` 曾被用在 zpe 解锁判定里，但 **ui.js 从未定义/import 过 `D`** ✗
+       //   ⇒ `bigCrunchCount` 为空那一帧会抛 `ReferenceError`，整帧 render 挂掉。
+       //   `formulas.js` 本来就导出它，直接 import 即可（单一来源 ✓）
   bigCrunchGain, canBigCrunch, collapseUnlocked, conversion, darkEnergyMultiplier,
   darkEnergyRate, dreamCoefficient,
   effectiveTraps, entropyRate, countFreqAddTerm,
-  globalMultiplier, globalMultiplierParts, isAutoAcquire, matterRate, overloadFactor, particleRate, repeatableCost, trapCost,  voidUpgradeCost, zpeBaseMultiplier, zpeMultiplier, zpeProductionPenalty, zpeRate,
-  deUpgradeCost,
-} from "./formulas.js";
+  globalMultiplier, globalMultiplierParts, isAutoAcquire, matterRate, overloadFactor, particleBoostRate, particleRate, repeatableCost, trapCost,  voidUpgradeCost, zpeBaseMultiplier, zpeMultiplier, zpeProductionPenalty, zpeRate,
+  deUpgradeCost } from "./formulas.js";
 import { deLevelOf, levelOf } from "./state.js";
-import { accelAffordable, affordableCount, coinageAffordable, infinityUpgradeEffect, zpeEngineAffordable } from "./engine.js";
+import { tick, affordableCount, zpeEngineAffordable } from "./engine.js";   // ★ 补回：删铸币时整行被删 ✗
 
 /**
  * 给元素加上乘区颜色 class，并附带一条 <span class="zone-tag">。
@@ -36,10 +63,22 @@ import { accelAffordable, affordableCount, coinageAffordable, infinityUpgradeEff
  *   所以这里对 `z.rainbow` 分支单独处理 —— 否则会加一个不存在的 `zone-dream`。
  */
 function applyZone(el, id, showTag = true) {
+  // ★ 参数兼容守卫：历史上有 `applyZone(cfg.id)` 这种**只传 id** 的调用 ✗
+  //   （把字符串当元素用 ⇒ el.classList 为 undefined ⇒ 构建期抛 TypeError ✗）
+  if (typeof el === "string" && (id === undefined || id === null || !id.classList)) { const t = el; el = id; id = t; }
+  if (!el || !el.classList) return;   // 拿不到元素就静默跳过 ✓（但不影响别的 ✓）
   const z = zoneOf(id);
   const key = ZONE_OF[id];
   if (z.rainbow) el.classList.add("rainbow-card");
-  else el.classList.add("zone", `zone-${key}`);
+  else if (key) el.classList.add("zone", `zone-${key}`);
+  // ★ 2025：**未登记乘区** ⇒ 只回退到默认色，**不加** `zone-undefined` ✗
+  //   （旧写法会加一个不存在的 class：按钮看着"没颜色"，但在 DOM 里查不出原因）
+  else el.classList.add("zone");
+  // ⚠️ 未登记的 id 要能**被发现**，不能静默 —— 项目规矩：漏登记过一次
+  //   （deGainBase / convOutput / 四条梦想升级都漏过，表现为"加成区不对"）
+  if (!key && typeof console !== "undefined") {
+    console.warn(`[zone] id "${id}" 未在 ZONE_OF 登记 ⇒ 拿不到乘区色（见 config.js 的 ZONE_OF）`);
+  }
   if (showTag) {
     const tag = document.createElement("span");
     tag.className = "zone-tag";
@@ -50,49 +89,15 @@ function applyZone(el, id, showTag = true) {
 }
 
 // ══════════════════════════════════════════════════════════
-// 数字格式化
+// 数字格式化 —— ★ 2025 已抽到 `./format.js`（唯一实现）
+//   为什么抽走：`engine.js` 的日志也要用 `sci()`，而 `ui.js` 已 import `engine.js`
+//   ⇒ 若反向 import 会成**循环依赖** ✗ ⇒ 两边都从 `format.js` 取 ✓
+//   ⚠️ **必须先 import 再 export** —— `export { x } from "…"` **不会**在本模块内
+//      绑定 `x`（那样下面的 `fmt(...)` 调用会 ReferenceError ✗，实测踩过）
+//   这里同时 import + 重新导出，保持既有调用方（`tools/dom-smoke.mjs` 等）不受影响 ✓
 // ══════════════════════════════════════════════════════════
-
-const fmtCache = new Map();
-
-/** 大数格式化：1000 以下保留小数，之后走科学计数，layer >= 2 用 e 的 e */
-export function fmt(value, places = 2) {
-  let d = value instanceof Decimal ? value : new Decimal(value);
-  if (!d.isFinite()) return d.sign > 0 ? "∞" : "-∞";
-  if (d.sign < 0) return "-" + fmt(d.neg(), places);
-  if (d.eq(0)) return "0";
-
-  if (d.lt(1000)) {
-    const n = d.toNumber();
-    const s = n.toFixed(places);
-    return s.includes(".") ? s.replace(/\.?0+$/, "") : s;
-  }
-  if (d.lt(1e6)) return d.toNumber().toFixed(0);
-
-  const e = d.log10();
-  const layer = d.layer ?? 0;
-  if (layer >= 2 || e.gte(1e6)) return `e${fmt(e, places)}`;
-
-  const exp = Math.floor(e.toNumber());
-  const mant = d.div(Decimal.pow(10, exp)).toNumber();
-  return `${mant.toFixed(places)}e${exp}`;
-}
-
-/** 倍率格式化 */
-export function fmtMult(value) {
-  const d = value instanceof Decimal ? value : new Decimal(value);
-  if (d.lt(1000)) return `×${d.toNumber().toFixed(2)}`;
-  return `×${fmt(d, 2)}`;
-}
-
-/** 时长格式化 */
-export function fmtTime(seconds) {
-  const s = Math.max(0, Math.floor(seconds));
-  if (s < 60) return `${s}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
-  if (s < 86400) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
-  return `${Math.floor(s / 86400)}d ${Math.floor((s % 86400) / 3600)}h`;
-}
+import { fmt, sci, fmtMult, fmtTime } from "./format.js";
+export { fmt, sci, fmtMult, fmtTime };
 
 const $ = (id) => document.getElementById(id);
 const el = {};
@@ -132,8 +137,7 @@ function wrapEl(node) {
       if (last === v) return;      // 值没变 -> 完全不碰 DOM
       last = v;
       TEXT_DESC.set.call(this, v);
-    },
-  });
+    } });
   return node;
 }
 
@@ -152,16 +156,27 @@ function cache() {
     "log-panel",
     "tab-tag-void", "void-count", "zpe-multiplier", "void-upgrade-list", "milestone-list",
     "de-locked", "de-content", "de-unlock-cond", "btn-unlock-transmuter",
+    // ★ 2025：各面板「已解锁过」的提示（第一次永恒后不再上锁，见 config.js 的 pageUnlocked）
+    "de-locked-title", "de-perma-hint", "q-locked-title", "q-perma-hint",
+    "inf-locked-title", "inf-perma-hint", "eternity-locked-title", "eternity-perma-hint",
     "de-multiplier", "de-penalty", "de-upgrade-list", "de-milestone-list",
     // ── 标签页 ──
     "tabs", "tab-void", "tab-de", "tab-quantum", "tab-infinity", "tab-eternity",
     "panel-void", "panel-zpe", "panel-de", "panel-quantum", "panel-infinity", "panel-eternity",
+    // ★★★ 2025（用户裁定）：主控台的子页（梦想 / 猫猫）
+    "panel-dream", "panel-neko",
+    "tab-wrap-console", "tab-flyout-console", "flyout-console-core", "flyout-console-dream", "flyout-console-neko",
     "tab-tag-void", "tab-tag-de", "tab-tag-quantum", "tab-tag-infinity", "tab-tag-eternity",
     // ── 永恒（**先占位**：门槛 + 永恒点公式，内容待设计）──
     "eternity-locked", "eternity-content", "eternity-need", "eternity-have",
+    "btn-eternity", "eternity-status",
     "val-eternity", "eternity-gain", "eternity-count",
+    // ── 主控台（原左列的 5 张卡并进标签页后的第一个面板）──
+    "panel-console",
     // ── 虚空科技的子页悬浮入口（悬停/聚焦时浮出两条）──
     "tab-wrap-void", "tab-flyout-void", "flyout-void-core", "flyout-void-zpe",
+    // ── 无限的子页悬浮入口（悬停「无限」浮出两条）──
+    "tab-wrap-infinity", "tab-flyout-infinity", "flyout-inf-core", "flyout-inf-deep", "panel-infdeep",
     // ── ZPE 引擎（虚空科技第二个子页）──
     "zpe-engine-locked", "zpe-engine-content", "zpe-engine-unlock-cost", "btn-unlock-zpe-engine",
     "zpe-engine-level", "zpe-engine-prod", "zpe-engine-exp", "zpe-engine-ip",
@@ -169,7 +184,9 @@ function cache() {
     "zpe-engine-buy-desc", "zpe-engine-cost", "zpe-engine-mechanisms",
     // ── 量子（第四层，红色）──
     "q-locked", "q-content", "q-need",
-    "val-quantum", "quantum-sub", "quantum-mult", "quantum-demult", "quantum-degain", "quantum-grow",
+    "val-quantum", "quantum-sub", "quantum-mult", "quantum-demult", "quantum-degain", "quantum-zpemult", "quantum-grow",
+    // ★ 跨度层（2025）：k / 乘数 / 基准 / 徽标
+    "span-badge", "span-k", "span-mult", "span-base",
     "quantum-pairs", "quantum-next-cost", "quantum-cur-zpe",
     "quantum-bar", "quantum-bar-text",
     "dream-badge", "dream-upgrade-list",
@@ -181,15 +198,36 @@ function cache() {
     "val-infinity", "bigcrunch-count", "bigcrunch-need",
     "bigcrunch-gain", "btn-bigcrunch", "bigcrunch-status",
     "bigcrunch-desc", "btn-break-infinity", "break-state", "overload-state",
-    // ── 无限铸币（设计未冻结）──
-    "coinage-badge", "coinage-level", "coinage-mult", "coinage-tier",
-    "btn-buy-coinage", "btn-buy-coinage-max", "coinage-afford", "coinage-desc", "coinage-cost",
-    // ── 坍缩加速器（直接买时间）──
-    "accel-badge", "accel-level", "accel-mult", "accel-time", "coinage-cap-per-crunch",
+    // ── 坍缩里程碑（铸币与坍缩加速器都已删除）──
     "tier-ms-badge", "tier-milestone-list",
-    "btn-buy-accel", "btn-buy-accel-max", "accel-afford", "accel-desc", "accel-cost",
+    // ★ 2025：永恒里程碑（设计稿 36~44 行）
+    "eternity-ms-badge", "eternity-milestone-list",
+    // ★★★ 2025：永恒升级「永恒增幅」（设计稿 33~35 行）
+    "btn-eternity-upg-epMult", "eternity-upg-epMult-lv", "eternity-upg-epMult-desc",
+    "eternity-upg-epMult-cost", "btn-max-eternity-upg-epMult", "max-eternity-upg-epMult-n",
+    // ★★★ 2025（NEKO.md §7 / 设计稿 §10）：猫猫**子页**（主控台 → 猫猫；两列布局）
+    "neko-badge", "neko-affinity", "neko-exponent", "neko-next", "neko-bar", "neko-bar-text",
+    "neko-drift", "neko-note", "neko-tier-list",
+    // 左列：道具（定价按 `NEKO.md` §10；★ 2025 已实装 ⇒ 是三个真按钮）+ 调试按钮
+    "neko-item-badge", "neko-item-list", "neko-item-note",
+    "btn-neko-item-catFood", "neko-item-catFood-cost", "neko-item-catFood-gain",
+    "btn-neko-item-lollipop", "neko-item-lollipop-cost", "neko-item-lollipop-gain",
+    "btn-neko-item-paw", "neko-item-paw-cost", "neko-item-paw-gain",
+    // 右列：对话（等 SDK）
+    "neko-chat-badge", "neko-chat", "neko-msg-placeholder", "neko-sdk-state",
+    // ★★★ 2025：梦想（自动化）子页（用户裁定归属主控台；目前是壳 + 自动化状态）
+    "dream-page-badge",
+    // ★★★ 2025：全局加成槽的**好感度指数**那一格（生效时才显示）
+    "gm-neko",
+    // ★★★ 2025：**自动化状态**（已移到梦想子页 ⇒ id 仍是这两个）
+    "auto-acquire", "auto-de",
+    // ★ 无限挑战（IC）的宿主：内容由 ui-ic.js 追加（2025 从 ZPE 引擎面板挪到这里）
+    "ic-host",
     // ── ∞ 层：无限升级 ──
     "inf-upgrade-list", "inf-upgrade-count", "inf-income", "inf-elapsed",
+    // ★ 2025：① 无限增幅置顶行（主按钮 + 买满按钮；形态与升级中心一致）
+    "inf-ipdouble-row", "inf-btn-ipDouble", "inf-ipDouble-state", "inf-ipDouble-desc", "inf-ipDouble-cost",
+    "btn-max-ipDouble", "max-ipDouble-n",
     "btn-save", "btn-export", "btn-reset",
   ];
   const missing = [];
@@ -254,6 +292,9 @@ function buildVoidUpgrades() {
       <div class="btn-cost" id="void-${cfg.id}-cost">—</div>
     `;
     el["void-upgrade-list"].appendChild(btn);
+    // ★ 2025 修复：原来是 `applyZone(cfg.id)` —— **只传 id 没传元素** ✗
+    //   兼容守卫换位后 `el` 仍是 undefined ⇒ 直接 return ⇒ **9 条虚空升级一个都没上色** ✗
+    //   （用户报"加成按钮没有按乘区上色"的根因之一。）改为与暗能量同一写法 ✓
     applyZone(btn, cfg.id);
   }
 }
@@ -335,7 +376,21 @@ function buildInfinityUpgrades() {
   const box = el["inf-upgrade-list"];
   if (!box) return;
   box.innerHTML = "";
+
+  // ★★ 2025：**① 无限增幅置顶、独立占一行**（用户要求），形态与
+  //   「升级中心」里的可重复升级**一致**：主按钮 + 「买满」按钮（同一个 CSS 类 `btn-main`）。
+  //   ⚠️ 外壳是**静态写在 index.html 里**的（这样 `cache()` 在 `initUI` 早期就能拿到这些 id）
+  //      ⇒ 这里只补文案与**乘区色**，不重建 DOM ✓
+  //   ⇒ 它不再出现在下面的 `.inf-grid` 里（下面的循环里 `continue` 跳过它 ✓）。
+  const row = el["inf-ipdouble-row"];
+  if (row) {
+    el["inf-ipDouble-desc"].textContent = INFINITY_UPGRADES.ipDouble.desc;
+    applyZone(el["inf-btn-ipDouble"], "ipDouble");
+    el["btn-max-ipDouble"].classList.add("zone", `zone-${ZONE_OF.ipDouble}`);
+  }
+
   for (const id of INFINITY_ORDER) {
+    if (id === "ipDouble") continue;          // ★ 已置顶，不进网格
     const cfg = INFINITY_UPGRADES[id];
     const z = zoneOf(id);
     const btn = document.createElement("button");
@@ -350,6 +405,7 @@ function buildInfinityUpgrades() {
       <div class="btn-cost" id="inf-${id}-cost">—</div>
     `;
     box.appendChild(btn);
+    // ★ 2025 修复：同样是"只传 id"✗ ⇒ 16 条无限升级没上色。改为传元素 ✓
     applyZone(btn, id);
   }
 }
@@ -383,6 +439,7 @@ function buildDreamUpgrades() {
       <div class="btn-cost" id="dream-${d.id}-cost">花费 ${d.cost} 梦想点</div>
     `;
     box.appendChild(btn);
+    // ★ 2025 修复：同样是"只传 id"✗ ⇒ 4 条梦想升级没上色。改为传元素 ✓
     applyZone(btn, d.id);
   }
 }
@@ -412,17 +469,32 @@ function buildZpeMechanisms() {
   if (!box) return;
   const cards = [
     {
-      name: "① 抬高倍率公式的指数",
-      at: `等级 ${ZPE_ENGINE.expLevel} 起 → 每级 +${ZPE_ENGINE.expPerLevel}（封顶 +${ZPE_ENGINE.expMax}）`,
-    },
+      name: "① ZPE 倍率的加法区加成",
+      at: `饱和式：+${ENGINE_MECH.add.A} 为上限（x = 等级/${ENGINE_MECH.add.knee}，x/(1+x) 收敛）⇒ 有终点 ✓` },
     {
-      name: "② 按等级提速 ZPE 产出",
-      at: `每级 → (1 + ${ZPE_ENGINE.perLevel}×等级)²`,
-    },
+      name: "② 按等级提速产出与倍率",
+      at: `开根式：产出 ×(1 + ${ENGINE_MECH.prod.coeff}·√等级)、倍率 ×(1 + ${ENGINE_MECH.mult.coeff}·√等级)（增长极慢 ⇒ 实际到顶早）` },
     {
-      name: "③ 倍率吃「计数频率」加成",
-      at: `等级 ${ZPE_ENGINE.countFreqLevel} 解锁 → ZPE 指数 2.0 → 3.7（计数频率是青色那一格，这里是它的下游）`,
-    },
+      name: "③ 吃「计数频率」与「量子」加成",
+      at: `等级 ${ZPE_ENGINE.countFreqLevel} 解锁计数频率（纯阈值 ⇒ 本身就是终点）；量子再给 ZPE 倍率 +q³/10（加法区）` },
+    {
+      // ★ 2025：设计稿第 4 条**之前漏了**（面板只列了 3 条 ✗）—— 用户指出后补上 ✓
+      name: "④ 引擎倍率也作用于暗能量倍率",
+      at: `饱和式：×${ENGINE_MECH.de.A + 1} 为上限（x = 等级/${ENGINE_MECH.de.knee}）⇒ 有终点 ✓` },
+    {
+      // ★★ 2025 B8：**b区（指数区）** —— 用户裁定"b区的成员由引擎控制"
+      //
+      //   为什么需要这一条（结合前四条一起读）：
+      //     ①②③④ 全都落在 **a区**（加法池 × 乘法池）⇒ 它们只改曲线的**高度**。
+      //     但**物质层的成长速率由基础公式决定**：`d log10(物质)/dt = b`（b 由量子线给），
+      //     a区 再怎么乘都改不了这个斜率 ✗
+      //     ⇒ 实测：引擎从 0 涨到 100 多级，a区 加成翻了几十倍，物质峰值只从
+      //        1e879 挪到 1e1134 —— **翻不过"每轮只推进几阶"那道墙** ✗
+      //     ⑤ 的作用是**对整个 a区括号取幂**：
+      //         `物质产出 = { ①…④ 那一整块 } ^ k`，`k = 1 + kMax·x/(1+x)`
+      //     ⇒ 斜率被放大 k 倍 ⇒ 这才是唯一能改**形状**（而不只是高度）的落点 ✓
+      name: "⑤ b区（指数区）：引擎给物质产出一个指数",
+      at: `整块 a区括号取幂：物质产出 = { 前四条 } ^ k，k = 1 → ${1 + MATTER_B_KMAX}（${MATTER_B_KNEE} 级后饱和）` },
   ];
   box.innerHTML = cards.map((c, i) => `
       <div class="btn zone zone-zpe" id="zpe-mech-${i}" style="cursor:default">
@@ -436,24 +508,229 @@ function buildZpeMechanisms() {
 }
 
 /**
- * 建「档位里程碑」清单（**只建一次**，`render()` 里只切 class）。
+ * 建「坍缩里程碑」清单（**只建一次**，`render()` 里只切 class）。
  *
- * 同上：每帧 innerHTML 会重置 hover / CSS 过渡 —— 而 `.ms-item` 是可悬停的。
+ * ⚠️ 结构必须与 `buildVoidUpgrades()` 里的里程碑**逐字一致**：
+ *    `div.ms` + `span.dot / .txt / .need`，状态用 `done` / `next` 两个 class。
+ *    第一版我用了 `ms-item` 这个**不存在的 class**，于是它在页面上和别的里程碑长得不一样。
+ *    （这里刻意**不调** `applyZone()`：档位里程碑的效果落在好几格上，
+ *      按项目规矩"落点不唯一就不上色"。）
  */
 function buildTierMilestones() {
   const box = el["tier-milestone-list"];
   if (!box) return;
-  box.innerHTML = TIER_MILESTONES.map((m) => `
-      <div class="ms-item" id="tms-${m.id}">
-        <span class="dot"></span>
-        <span class="txt">${m.desc}</span>
-        <span class="need">${m.at} 次大坍缩</span>
-      </div>`).join("");
+  box.innerHTML = "";
+  for (const m of TIER_MILESTONES) {
+    const d = document.createElement("div");
+    d.className = "ms";
+    d.id = `tms-${m.id}`;
+    d.innerHTML = `<span class="dot"></span><span class="txt">${m.desc}</span>` +
+      `<span class="need" id="tms-${m.id}-need">${m.at} 次大坍缩</span>`;
+    box.appendChild(d);
+  }
+}
+
+/**
+ * ★★ 2025：**永恒里程碑**列表（设计稿 36~44 行；按永恒次数解锁）。
+ *
+ * 与档位里程碑同一套 DOM 约定（`.ms` + `.done` / `.next`），但多一个状态：
+ * **`pending`（待实装）** —— 条目已登记、机制本体还没做。
+ * 这一类**必须显式标出来**（用户指定"剩下的先做个占位"），
+ * 否则玩家拿到后会以为有效果 ✗。`tools/eternity-lab.mjs` 有断言守这条。
+ *
+ * ⚠️ 刻意**不调 `applyZone()`**：永恒里程碑的效果落在好几处（IP 保留 / 量子 / 熵 / …），
+ *   按项目规矩"落点不唯一就不上色"。
+ */
+function buildEternityMilestones() {
+  const box = el["eternity-milestone-list"];
+  if (!box) return;
+  box.innerHTML = "";
+  for (const m of ETERNITY_MILESTONES) {
+    const d = document.createElement("div");
+    d.className = "ms";
+    d.id = `ems-${m.id}`;
+    d.innerHTML = `<span class="dot"></span><span class="txt">${m.desc}</span>` +
+      `<span class="need" id="ems-${m.id}-need">第 ${m.need} 次永恒</span>`;
+    box.appendChild(d);
+  }
+}
+
+/**
+ * ★★★ 2025 新实现（第三层设计稿 33~35 行）：**永恒升级「永恒增幅」的渲染**。
+ *
+ * ⚠️ 与实发**同源**：等级/倍率/价格分别来自
+ *   `state.epMultLevel` / `epMultFactor` / `epMultPriceAt`（唯一入口）⇒
+ *   不可能出现"显示 ≠ 实发" ✓（本项目在这上面栽过 4 次）
+ */
+function renderEternityUpgrades(state) {
+  const lv = Math.max(0, Number(state.epMultLevel ?? 0) || 0);
+  const f = epMultFactor(state);
+  const price = epMultPriceAt(lv);
+  const ep = state.eternityPoints ?? D(0);
+  const can = ep.gte(price);
+  const nextF = f.mul(ETERNITY_UPGRADES.epMult.effectMult);
+
+  if (el["eternity-upg-epMult-lv"]) el["eternity-upg-epMult-lv"].textContent = `Lv ${lv}`;
+  if (el["eternity-upg-epMult-desc"]) {
+    el["eternity-upg-epMult-desc"].textContent = lv > 0
+      ? `最终获得的永恒点 ×${fmt(f, 0)}（下一级 ×${fmt(nextF, 0)}）`
+      : ETERNITY_UPGRADES.epMult.desc;
+  }
+  if (el["eternity-upg-epMult-cost"]) {
+    el["eternity-upg-epMult-cost"].textContent = `花费 ${fmt(price, 0)} 永恒点`;
+  }
+  if (el["max-eternity-upg-epMult-n"]) {
+    el["max-eternity-upg-epMult-n"].textContent = fmt(epMultAffordableIn(lv, ep), 0);
+  }
+  const b = el["btn-eternity-upg-epMult"];
+  if (b) {
+    b.classList.toggle("affordable", can);
+    b.disabled = !can;
+  }
+  const bm = el["btn-max-eternity-upg-epMult"];
+  if (bm) bm.disabled = !(epMultAffordableIn(lv, ep) > 0);
+}
+
+/**
+ * ★★★ 2025 新实现（`docs/NEKO.md` §7 / 设计稿 §10）：**猫猫卡片**。
+ *
+ * 守「显示 == 实发」：好感度 / 指数 / 下一档全部走 config 的
+ *   `nekoGlobalExponent` / `nekoNextTier` / `NEKO`（**唯一入口**）⇒ 与实发不可能脱节 ✓
+ *
+ * ⚠️ 接入 N.E.K.O SDK 是**另一条线**（NEKO.md §3~§9，走 `neko-minigame-sdk`）。
+ *   本卡片在**未接入**时也完整可用（好感度由游戏内原生机制驱动）——
+ *   这正是 NEKO.md §7 明写的定位 ✓
+ */
+function renderNeko(state) {
+  const a = Number(state?.nekoAffinity ?? 0) || 0;
+  const exp = nekoGlobalExponent(state);
+  const next = nekoNextTier(state);
+
+  // ★★★ 2025（`docs/NEKO.md` §3~§9）：**宿主接入状态** ——
+  //   用户原则「没有 ui 真的很容易误判」⇒ 接没接上必须看得见 ✓
+  //   ⚠️ 判据**调真函数** `nekoHostPresent()`（读宿主注入的 `#neko-minigame-host-launch`），
+  //      不是看 `window.lanlan_config`（那是**旧式集成**，soccer/badminton 用的另一条路 ✗）
+  if (el["neko-sdk-state"]) {
+    const host = nekoHostPresent(globalThis.document);
+    el["neko-sdk-state"].textContent = host
+      ? "已检测到宿主（本游戏尚未注册 ⇒ 暂不连接）"
+      : "未接入（本页无宿主）";
+  }
+  if (el["neko-chat-badge"]) {
+    el["neko-chat-badge"].textContent = nekoHostPresent(globalThis.document) ? "宿主已就绪" : "未接入";
+  }
+
+  if (el["neko-affinity"]) el["neko-affinity"].textContent = String(Math.round(a * 100) / 100);
+  if (el["neko-exponent"]) {
+    el["neko-exponent"].textContent = exp === 1
+      ? "^1（未生效）"
+      : `^${exp.toFixed(7)}（全局加成取这个幂）`;
+  }
+  if (el["neko-next"]) {
+    el["neko-next"].textContent = next
+      ? `好感度 > ${next.need} ⇒ 全局 ^${next.pow}` + (a <= next.need ? `（还差 ${(next.need - a).toFixed(1)}）` : "")
+      : "已全部生效（^1.0221151）";
+  }
+  // 进度条：0 ⇒ 空、100 ⇒ 满（负值按 0 显示，因为负向不影响收益 ✓）
+  if (el["neko-bar"] && el["neko-bar-text"]) {
+    const pct = Math.max(0, Math.min(1, a / NEKO.max));
+    el["neko-bar"].style.width = `${(pct * 100).toFixed(1)}%`;
+    el["neko-bar-text"].textContent = `${Math.round(a)} / ${NEKO.max}`;
+  }
+  if (el["neko-drift"]) {
+    const room = nekoDriftRoom(state);
+    el["neko-drift"].textContent = room > 0
+      ? `还剩 ${room} 点（每 5 分钟 < ${NEKO.driftMax} 点${room < NEKO.driftMax ? "，已用掉一部分" : ""}）`
+      : `已用完（每 5 分钟 < ${NEKO.driftMax} 点）—— 等窗口过去`;
+  }
+  // ★★★ 2025（`NEKO.md` §10）：**道具**（三个）——
+  //   判据全部走 `NEKO_ITEMS` + `nekoDriftRoom`（**同一套来源**，不在这里重写 ✗）
+  {
+    const room = nekoDriftRoom(state);
+    let usable = 0;
+    for (const it of Object.values(NEKO_ITEMS)) {
+      const canRes = it.can(state) === true;
+      const can = canRes && room > 0;
+      if (canRes) usable++;
+      const btn = el[`btn-neko-item-${it.id}`];
+      if (btn) {
+        btn.classList.toggle("affordable", can);
+        btn.disabled = !can;
+      }
+      const cost = el[`neko-item-${it.id}-cost`];
+      if (cost) {
+        cost.textContent = !canRes ? `需要：${it.costText}`
+          : room <= 0 ? `窗口额度已用完（每 5 分钟 < ${NEKO.driftMax} 点）`
+            : it.costText;
+      }
+    }
+    if (el["neko-item-badge"]) el["neko-item-badge"].textContent = `${usable} / ${Object.keys(NEKO_ITEMS).length} 可用`;
+  }
+  // ★ 档位阶梯：**只建一次 DOM，之后只改文本 + class** ✓
+  //   （踩过：每帧 `innerHTML` 会重置 hover ⇒ 闪烁 ✗，见文件里其它渲染块的注释）
+  const box = el["neko-tier-list"];
+  if (box) {
+    if (!box.dataset.built) {
+      box.dataset.built = "1";
+      for (const t of NEKO.tiers) {
+        const d = document.createElement("div");
+        d.id = `neko-tier-${t.need}`;
+        box.appendChild(d);
+      }
+    }
+    for (const t of NEKO.tiers) {
+      const d = document.getElementById(`neko-tier-${t.need}`);
+      if (!d) continue;
+      const on = a > t.need;
+      d.className = on ? "on" : "";
+      d.innerHTML = `<span>好感度 &gt; ${t.need}</span><b>全局 ^${t.pow}${on ? "　✅ 已生效" : ""}</b>`;
+    }
+  }
+}
+
+/** 永恒里程碑的状态刷新（只在 `render()` 里调，不重建 DOM） */
+function renderEternityMilestones(state) {
+  const box = el["eternity-milestone-list"];
+  if (!box) return;
+  let doneCount = 0;
+  let nextFound = false;
+  for (const m of ETERNITY_MILESTONES) {
+    const node = document.getElementById(`ems-${m.id}`);
+    if (!node) continue;
+    const reached = hasEternityMilestone(state, m.id);
+    if (reached) doneCount++;
+    const isNext = !reached && !nextFound;
+    if (isNext) nextFound = true;
+    node.classList.toggle("done", reached);
+    node.classList.toggle("next", isNext);
+    // `pending` 的条目**即使达成也标成待实装**（避免"拿到了却没效果"的误解）
+    node.classList.toggle("pending", m.pending === true);
+    const need = document.getElementById(`ems-${m.id}-need`);
+    if (need) {
+      if (m.pending) need.textContent = reached ? `已达成 · 待实装` : `第 ${m.need} 次永恒 · 待实装`;
+      else if (m.id === "em5" && reached) need.textContent = `已达成 · 当前 ×${fmt(em5IpMult(state), 2)}`;
+      else need.textContent = reached ? "已达成" : `第 ${m.need} 次永恒`;
+    }
+    if (m.pending && node.title !== (m.pendingWhy ?? "")) node.title = m.pendingWhy ?? "";
+  }
+  if (el["eternity-ms-badge"]) el["eternity-ms-badge"].textContent = `${doneCount} / ${ETERNITY_MILESTONES.length}`;
 }
 
 /** 虚空科技的父标签 / 子页映射（子页激活时父标签也要亮着） */
-const TAB_PARENT = { void: "void", zpe: "void", de: "de", quantum: "quantum", infinity: "infinity", eternity: "eternity" };
-const ALL_PANELS = ["void", "zpe", "de", "quantum", "infinity", "eternity"];
+const TAB_PARENT = { void: "void", zpe: "void", de: "de", quantum: "quantum", infinity: "infinity", infdeep: "infinity", eternity: "eternity" };
+/** 子页 → 它的父标签（父标签在子页激活时保持高亮） */
+const SUB_WRAP = {
+  zpe: "tab-wrap-void",
+  infdeep: "tab-wrap-infinity",
+  // ★★★ 2025（用户裁定）：主控台的**三个子页**（主控台本体 / 梦想 / 猫猫）
+  //   —— 与虚空科技同一套表现形式 ✓
+  dream: "tab-wrap-console",
+  neko: "tab-wrap-console",
+};
+const ALL_PANELS = [
+  "console", "dream", "neko",          // ★ 2025：主控台的三个子页
+  "void", "zpe", "de", "quantum", "infinity", "infdeep", "eternity",
+];
 
 export function activateTab(name) {
   for (const t of el["tabs"].querySelectorAll("[data-tab]")) {
@@ -461,8 +738,10 @@ export function activateTab(name) {
     t.classList.toggle("active", on && !t.classList.contains("flyout-item"));
     if (t.classList.contains("flyout-item")) t.classList.toggle("active", on);
   }
-  const parent = TAB_PARENT[name] ?? name;
-  el["tab-wrap-void"]?.classList.toggle("sub-active", parent === "void" && name === "zpe");
+  // 父标签高亮：表驱动（原来硬编码 void/zpe，加第二个子页时会漏）
+  for (const [sub, wrapId] of Object.entries(SUB_WRAP)) {
+    el[wrapId]?.classList.toggle("sub-active", name === sub);
+  }
   for (const p of ALL_PANELS) {
     const panel = el[`panel-${p}`];
     if (panel) panel.hidden = p !== name;
@@ -510,6 +789,26 @@ function effectText(state, id) {
 let lastLogSig = "";
 
 export function render(state) {
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2025（用户裁定 + 用户质问「为什么要我再永恒一次？bug 还是特性？」）
+  //        ⇒ **是 bug**，不该让玩家多跑一轮。这里做**实时自愈**。
+  // ══════════════════════════════════════════════════════════
+  // 正确语义：「永恒过的档 ⇒ 永恒前的所有页面**永久解锁**」
+  //   所以判据就是 `eternityCount > 0` —— **不需要**依赖"那一刻打点成功"。
+  //
+  // 原来只有两条路：① 载入兜底（`deserialize`）② 永恒那一刻打点（`doEternity`）
+  //   ⇒ 若玩家**当前内存里**的记录是空的（旧档、或当初那一刻没打点）
+  //     ⇒ 必须**再永恒一次**才补上 ⇒ 玩家看到的就是"页面被重置" ✗
+  //   （用户原话：「已经永恒一次了不应该一直解锁么」—— 对 ✓）
+  //
+  // ⇒ 加第三条路：**渲染时按 `eternityCount > 0` 补齐**。
+  //   `markPageUnlocked` 是**幂等**的（已为 true 时直接 return false）⇒ 每帧调也无副作用 ✓
+  //   ⇒ 玩家**下一帧**就自愈，不用再永恒一次 ✓
+  if ((state.eternityCount ?? 0) > 0) {
+    for (const k of PAGE_KEYS) markPageUnlocked(state, k);
+  }
+  buildIcUI();      // IC panel: create once
+  renderIc(state);  // IC panel: text/class only
   const R = state.resources;
 
   // ── 资源条 ──
@@ -541,7 +840,18 @@ export function render(state) {
     el["gm-dream"].textContent = `梦想点 ×${fmt(parts.dream, 2)}`;
     el["gm-countfreq"].textContent = `计数频率 ×${fmt(parts.countFreq, 2)}`;
     el["gm-de"].textContent = `暗能量 ×${fmt(parts.de, 2)}`;
+    // ★★★ 2025（NEKO.md §7）：好感度那一层**指数**也必须显示出来 ——
+    //   否则 `dream × countFreq × de ≠ total`（三因子相乘**再取幂**）⇒ 显示自相矛盾 ✗
+    if (el["gm-neko"] && parts.nekoExp !== 1) {
+      el["gm-neko"].textContent = `好感度 ^${parts.nekoExp.toFixed(7)}`;
+      el["gm-neko"].hidden = false;
+    } else if (el["gm-neko"]) {
+      el["gm-neko"].hidden = true;
+    }
   }
+
+  // ── 猫猫卡片（主控台，无条件刷新：好感度**不受面板显隐影响**）──
+  renderNeko(state);
 
   // ── 点击 ──
   let clickGain = new Decimal(BASE.clickGain);
@@ -625,15 +935,24 @@ export function render(state) {
     const btn = $(`void-btn-${cfg.id}`);
     if (!btn) continue;
     const cost = voidUpgradeCost(state, cfg.id);
-    const can = !owned && (cfg.costDream ? state.dreamPoints.gte(cfg.costDream) : state.zpe.gte(cost));
+    // ★ 门槛（requireZpe）必须同时进"可购买判定"与"文案" ——
+    //   踩过（第五例"显示 ≠ 实发"）：界面只看 `costDream`，于是把 v9「传承启迪」
+    //   标成可购买、价格写"花费 1 梦想点"，**而引擎会因 `requireZpe: 1e8` 拒绝** ✗
+    //   ⇒ 玩家看到能买却买不动，且不知道缺什么。
+    const zpeGateOk = cfg.requireZpe == null || state.zpe.gte(cfg.requireZpe);
+    const can = !owned && zpeGateOk &&
+      (cfg.costDream ? state.dreamPoints.gte(cfg.costDream) : state.zpe.gte(cost));
     btn.classList.toggle("affordable", can);
     btn.classList.toggle("maxed", owned);
     $(`void-${cfg.id}-state`).textContent = owned ? "已购买 ✓" : "未购买";
+    const priceText = cfg.costDream
+      ? `花费 ${cfg.costDream} 梦想点`
+      : `花费 ${fmt(cost)} ZPE`;
+    // 门槛单独写出来（用「｜」分隔），而不是把它混进价格里 —— 价格与门槛是两回事
+    const gateText = cfg.requireZpe == null ? "" : `｜需 ZPE ≥ ${fmt(cfg.requireZpe)}`;
     $(`void-${cfg.id}-cost`).textContent = owned
       ? "已生效"
-      : cfg.costDream
-        ? `花费 ${cfg.costDream} 梦想点`
-        : `花费 ${fmt(cost)} ZPE`;
+      : priceText + gateText;
   }
   el["void-count"].textContent = String(voidOwned);
   // ★ 总数从 config 推导，不写死 9 —— 加第 10 个虚空升级时这里要跟着变
@@ -644,64 +963,62 @@ export function render(state) {
   {
     const goal = new Decimal(10).pow(ETERNITY.goalLog10);
     const can = state.infinityPoints.gte(goal);
+    // ★★ 2025 补漏：永恒页**也**必须走「曾经解锁过」的永久记录 ——
+    //   原来这里直接 `can ? "可永恒" : "锁"`，而 `can` 看的是**本轮 IP** ⇒
+    //   永恒后 IP 归零，标签立刻变回"锁"，玩家以为自己丢了永恒页 ✗
+    //   （用户实测反馈：「我的永恒页面也被重置了」—— 与量子/无限/暗能量同一个病，
+    //     我上一轮只改了那三个，漏了这个 ✗）
+    //   `perma` 的判据：跑过永恒（`eternityCount > 0`）**或**已有永久记录。
+    //   第一次达成时下面会 `markPageUnlocked` 打点 ⇒ 此后永久为真 ✓
+    const perma = pageUnlocked(state, "eternity") || (state.eternityCount ?? 0) > 0;
     el["eternity-locked"].hidden = can;
     el["eternity-content"].hidden = !can;
-    el["eternity-need"].textContent = `1e${ETERNITY.goalLog10.toFixed(2)}`;
+    if (!can) {
+      if (el["eternity-perma-hint"]) el["eternity-perma-hint"].hidden = !perma;
+      if (el["eternity-locked-title"]) el["eternity-locked-title"].textContent = perma ? "永恒 · 本轮待推进" : "永恒未解锁";
+    }
+    el["eternity-need"].textContent = sci(Decimal.pow(10, ETERNITY.goalLog10));
     el["eternity-have"].textContent = fmt(state.infinityPoints);
     el["val-eternity"].textContent = fmt(state.eternityPoints, 0);
     el["eternity-gain"].textContent = fmt(eternityPointGain(state.infinityPoints), 0);
     el["eternity-count"].textContent = String(state.eternityCount ?? 0);
-    el["tab-tag-eternity"].textContent = can ? "可永恒" : "锁";
+    // 标签：解锁过就**永不加锁**（与量子/无限/暗能量同一套语义）
+    el["tab-tag-eternity"].textContent = can ? "可永恒" : (perma ? "待推进" : "锁");
+    el["tab-eternity"].classList.toggle("locked", !(perma || can));
+    if (perma || can) markPageUnlocked(state, "eternity");   // 幂等打点
+    // ★ 永恒按钮：到 1e280 才可用（用户指定），且**手动**触发
+    const be = el["btn-eternity"];
+    be.disabled = !can;
+    be.classList.toggle("affordable", can);
+    el["eternity-status"].textContent = can ? "可永恒" : "需要 1e280 无限点";
   }
 
-  // ── 坍缩加速器（直接买时间）──
-  {
-    const lv = accelLevel(state);
-    const max = accelMaxLevel();
-    const mult = accelMult(state);
-    const can = accelAffordable(state);
-    const cost = accelCost(state);
-    el["accel-level"].textContent = String(lv);
-    el["accel-badge"].textContent = lv + " / " + max;
-    el["accel-mult"].textContent = fmtMult(mult);
-    // 一次大坍缩的耗时与成长速率严格成反比
-    el["accel-time"].textContent = "×" + (1 / mult).toFixed(3);
-    el["accel-afford"].textContent = lv >= max ? "已封顶" : can > 0 ? "可买 " + can + " 级" : "买不起";
-    el["accel-cost"].textContent = lv >= max ? "已封顶（×" + CRUNCH_ACCEL.maxMult + "）" : "花费 " + fmt(cost) + " 无限点";
-    el["accel-desc"].textContent = "成长速率 ×" + (1 + CRUNCH_ACCEL.perLevel) + "/级";
-    const btn = el["btn-buy-accel"];
-    btn.classList.toggle("affordable", lv < max && state.infinityPoints.gte(cost));
-    btn.classList.toggle("maxed", lv >= max);
-  }
+  // ★★ 2025：**坍缩加速器的渲染块已整个删除**（用户裁定 —— "否则会对机制解读有极大污染"）
 
-  // ── 无限铸币（**设计未冻结**：用户保留最终修改权）──
+  // ── 坍缩里程碑（铸币已删 ⇒ 只剩 rate / lube 两类）──
   {
-    const lv = coinageLevel(state).toNumber();
-    const cap = coinageCap(state);
-    const can = coinageAffordable(state);
-    const cost = coinageCost(state);
-    el["coinage-level"].textContent = `${fmt(lv, 0)} / ${cap}`;
-    el["coinage-mult"].textContent = fmtMult(coinageMult(state));
-    el["coinage-tier"].textContent = fmt(state.bigCrunchCount ?? 0, 0);
-    el["coinage-badge"].textContent = `${lv} / ${cap}`;
-    el["coinage-afford"].textContent = lv >= cap ? "本档已满" : can > 0 ? `可买 ${can} 级` : "买不起";
-    el["coinage-cost"].textContent = lv >= cap ? "大坍缩一次才会放行下一批" : `花费 ${fmt(cost)} 无限点`;
-    el["coinage-desc"].textContent =
-      `无限点收入 ×${COINAGE.effectPerLevel}/级（现 ×${fmtMult(coinageMult(state))}）`;
-    el["coinage-cap-per-crunch"].textContent = String(coinageCapPerCrunch(state));
-    // ★ 档位里程碑：只切 class（清单在 buildTierMilestones() 里建过一次）
+    // ★ 坍缩里程碑：与虚空/暗能量里程碑**同一套状态**（done / next），只切 class
     {
       const done = new Set(tierMilestonesDone(state).map((m) => m.id));
+      let nextFound = false;
       for (const m of TIER_MILESTONES) {
         const node = document.getElementById("tms-" + m.id);
-        if (node) node.classList.toggle("done", done.has(m.id));
+        if (!node) continue;
+        const isDone = done.has(m.id);
+        const isNext = !isDone && !nextFound;
+        if (isNext) nextFound = true;
+        node.classList.toggle("done", isDone);
+        node.classList.toggle("next", isNext);
+        const need = document.getElementById("tms-" + m.id + "-need");
+        if (need) need.textContent = isDone ? "已达成" : m.at + " 次大坍缩";
       }
       el["tier-ms-badge"].textContent = done.size + " / " + TIER_MILESTONES.length;
+      // ★ 2025：永恒里程碑（同一套 done/next 约定；额外有 pending 态）
+      renderEternityMilestones(state);
+      // ★★★ 2025：永恒升级「永恒增幅」（设计稿 33~35 行）
+      renderEternityUpgrades(state);
     }
 
-    const btn = el["btn-buy-coinage"];
-    btn.classList.toggle("affordable", lv < cap && state.infinityPoints.gte(cost));
-    btn.classList.toggle("maxed", lv >= cap);
   }
 
   // ── ZPE 引擎（虚空科技的第二个子页）──
@@ -709,19 +1026,24 @@ export function render(state) {
     const unlocked = zpeEngineUnlocked(state);
     el["zpe-engine-locked"].hidden = unlocked;
     el["zpe-engine-content"].hidden = !unlocked;
-    el["zpe-engine-unlock-cost"].textContent = fmt(ZPE_ENGINE.unlockCostIp, 0);
+    // ★ 2025：解锁条件改为「1 次大坍缩」并送 1 级（里程碑奖励，不再花无限点）
+    el["zpe-engine-unlock-cost"].textContent = state.bigCrunchCount?.gte(1) ? "条件已满足" : "1 次大坍缩";
     const btnUnlock = el["btn-unlock-zpe-engine"];
-    const canUnlock = !unlocked && state.infinityPoints.gte(ZPE_ENGINE.unlockCostIp);
+    const canUnlock = !unlocked && (state.bigCrunchCount ?? D(0)).gte(1);   // ★ 2025：解锁条件已改成「1 次大坍缩」（不再花无限点 ✗）
     btnUnlock.classList.toggle("affordable", canUnlock);
     btnUnlock.disabled = unlocked;
-    btnUnlock.textContent = unlocked ? "已解锁 ✓" : `解锁（${fmt(ZPE_ENGINE.unlockCostIp, 0)} 无限点）`;
+    btnUnlock.textContent = unlocked ? "已解锁 ✓" : "解锁（1 次大坍缩，送 1 级）";
 
     const lv = zpeEngineLevel(state);
     const prod = zpeEngineProdMult(state);
-    const expBonus = zpeEngineExpBonus(state);
-    el["zpe-engine-level"].textContent = fmt(lv, 0);
+    const addBonus = zpeEngineAddBonus(state);
+    const multBonus = zpeEngineMultBonus(state);
+    // ★ 2025：量子项的显示**必须含引擎账**（否则与 `zpeMultiplier` 的实发不符 ✗）
+    const qTerm = quantumZpeMultBonus(qOf(state), engineBonusMult(state));
+    el["zpe-engine-level"].textContent = lv.gte(1e6) ? `10^${lv.log10().toNumber().toFixed(2)}` : fmt(lv, 0);
     el["zpe-engine-prod"].textContent = fmtMult(prod);
-    el["zpe-engine-exp"].textContent = (ZPE_EXPONENT + expBonus).toFixed(3);
+    // ★ 2025：这一格从"公式指数"改成"加法区加成"（设计稿第 1 条 ✓）
+    el["zpe-engine-exp"].textContent = fmtMult(addBonus.max(1));
     el["zpe-engine-ip"].textContent = fmt(state.infinityPoints, 0);
 
     const can = zpeEngineAffordable(state);
@@ -735,20 +1057,32 @@ export function render(state) {
     el["zpe-engine-buy-desc"].textContent =
       `ZPE 产出 ${fmtMult(prod)} → ${fmtMult(nextProd)}`;
 
-    // ★ 三条机制：**只更新文本与 class**，绝不重建 DOM。
+    // ★ 引擎机制（**4 条**）：只更新文本与 class，绝不重建 DOM。
     //   踩过的坑：这里原来是每帧 `innerHTML = …` —— 每帧重建会重置 `:hover`
     //   与 CSS 过渡，玩家鼠标一挪上去就**频繁闪烁**（用户实测报的 bug）。
     //   所以卡片在 `buildZpeMechanisms()` 里建一次，这里只改两个文本 + 一个 class。
     const mech = [
       {
         on: unlocked,
-        now: `当前指数 ${(ZPE_EXPONENT + expBonus).toFixed(3)}（基础 ${ZPE_EXPONENT}）`,
-      },
-      { on: unlocked, now: `当前 ${fmtMult(prod)}` },
+        now: `当前 ZPE 倍率 +${fmt(addBonus)}（加法区）` },
+      {
+        on: unlocked,
+        now: `产出 ${fmtMult(prod)}｜倍率 ${fmtMult(multBonus)}` },
       {
         on: zpeEngineCountFreqUnlocked(state),
-        now: zpeEngineCountFreqUnlocked(state) ? "已生效（ZPE 指数 2.0 → 3.7）" : "未生效",
-      },
+        now: zpeEngineCountFreqUnlocked(state)
+          ? `计数频率已生效｜量子项 +${fmt(qTerm)}（q³/10）`
+          : `量子项 +${fmt(qTerm)}（q³/10）｜计数频率等级 ${ZPE_ENGINE.countFreqLevel} 解锁` },
+      {
+        // ★ 设计稿第 4 条（之前漏列 ✗）：暗能量倍率 ×2^等级
+        on: unlocked,
+        now: `暗能量倍率 ×${fmtMult(multBonus)}（= 2^等级）` },
+      {
+        // ★★ 2025 B8：第 5 条 —— b区（指数区）。**前四条都只是高度，这条才改形状**
+        on: matterTotalExponent(state) > 1 + 1e-9,
+        now: matterTotalExponent(state) > 1 + 1e-9
+          ? `物质产出 = { 前四条 } ^ ${matterTotalExponent(state).toFixed(3)}（斜率 ×${matterTotalExponent(state).toFixed(2)}）`
+          : `k = 1（引擎等级 0 ⇒ 不生效）｜${MATTER_B_KNEE} 级饱和到 k = ${(1 + MATTER_B_KMAX).toFixed(0)}` },
     ];
     mech.forEach((m, i) => {
       const card = $(`zpe-mech-${i}`);
@@ -759,6 +1093,38 @@ export function render(state) {
       const now = $(`zpe-mech-${i}-now`);
       if (now) now.textContent = m.now;
     });
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2025：**自动化状态**（设计稿第 24 行）
+  // ══════════════════════════════════════════════════════════
+  // ⚠️ 位置：**主控台 → 梦想（自动化）子页**（用户裁定子页归属）
+  //   ⇒ 从 ZPE 渲染块里**搬出来**、变成无条件刷新（它是独立面板，不随 ZPE 页显隐）✓
+  // 用户原则：「**没有 ui 真的很容易误判**」—— 这批自动化早就实现了
+  //   （`isAutoAcquire` 管升级/熵阱、梦想升级 `autoBuyDe` 管 5 条暗能量升级），
+  //   但页面上**一处都不显示** ⇒ 看不出它在跑 ✗
+  // ⚠️ 判据全部**调真函数**（`isAutoAcquire` / `dreamUpgradeEffects`），不在这里重写条件 ✓
+  {
+    const acqUp = isAutoAcquire(state, "upgrade");
+    const acqTrap = isAutoAcquire(state, "trap");
+    const v9 = !!state.voidUpgrades?.v9;
+    if (el["auto-acquire"]) {
+      el["auto-acquire"].textContent = acqUp || acqTrap
+        ? `已开启（升级${acqUp ? "✓" : "✗"} / 熵阱${acqTrap ? "✓" : "✗"}）`
+        : v9 ? "v9 已买，但门槛未满足" : "未开启（需虚空升级 v9）";
+    }
+    if (el["auto-de"]) {
+      const ids = dreamUpgradeEffects(state).autoBuyDe ?? [];
+      el["auto-de"].textContent = ids.length
+        ? `已开启 ${ids.length} 条：${ids.join(" / ")}`
+        : `未开启（需梦想升级，共 4 条）`;
+    }
+  }
+  // 梦想子页的徽标：有自动化在跑就标"部分实装"，否则"壳子" ✓
+  if (el["dream-page-badge"]) {
+    const anyAuto = isAutoAcquire(state, "upgrade") || isAutoAcquire(state, "trap")
+      || (dreamUpgradeEffects(state).autoBuyDe ?? []).length > 0;
+    el["dream-page-badge"].textContent = anyAuto ? "自动化部分实装" : "壳子";
   }
 
   // ── ZPE 里程碑 ──
@@ -780,12 +1146,20 @@ export function render(state) {
   }
 
   // ── 暗能量面板 ──
-  const unlocked = state.phaseTransmuterUnlocked;
-  el["tab-tag-de"].textContent = unlocked ? fmt(state.darkEnergy) : "锁";
+  // ★★ 2025（用户裁定）：暗能量是靠**按钮**启动的（不是自动判定）——
+  //   所以"保持解锁"的正确做法是：**标签永不上锁**（解锁过就一直可点进去），
+  //   里面照旧显示"启动相变仪"的按钮与本轮条件（条件已随虚空升级清零 ⇒ 需重新满足）。
+  //   原来标签在 `phaseTransmuterUnlocked === false` 时直接上锁 ⇒ 永恒后点不进去 ✗
+  const perma = pageUnlocked(state, "de");
+  const unlocked = state.phaseTransmuterUnlocked === true;
+  el["tab-tag-de"].textContent = unlocked ? fmt(state.darkEnergy) : (perma ? "待推进" : "锁");
+  el["tab-de"].classList.toggle("locked", !(perma || unlocked));
   el["de-locked"].hidden = unlocked;
   el["de-content"].hidden = !unlocked;
 
   if (!unlocked) {
+    if (el["de-perma-hint"]) el["de-perma-hint"].hidden = !perma;
+    if (el["de-locked-title"]) el["de-locked-title"].textContent = perma ? "相变仪 · 本轮待重启" : "相变仪未解锁";
     const g = DE_MILESTONES.find((m) => m.id === "dm0")?.gate;
     if (g) {
       const hasVoidOk = !g.voidUpgrade || state.voidUpgrades[g.voidUpgrade];
@@ -918,40 +1292,79 @@ function escapeHtml(s) {
 // ══════════════════════════════════════════════════════════
 
 function renderQuantum(state, R) {
-  const unlocked = collapseUnlocked(state);
+  // ★★ 2025（用户裁定）：**页面解锁与"本轮是否推进到"分开** ——
+  //   · 曾经解锁过（`pageUnlocked`，**永不重置**）⇒ 标签**不再上锁**、
+  //     但本轮还没摸到 1e25 时显示"已解锁 · 待推进"，而不是把页面收回去 ✗
+  //   · 本轮 `peakMatter ≥ 1e25` ⇒ 正常显示内容
+  //   原来只判 `collapseUnlocked`（= peakMatter）⇒ 永恒归零后整页重新上锁 ✗
+  const perma = pageUnlocked(state, "quantum");
+  const live = collapseUnlocked(state);
+  const showContent = live;                       // 只有本轮真达到才显示内容
+  const lockedBox = !live;                        // 未达到（无论是否解锁过）都显示提示框
 
-  el["q-locked"].hidden = unlocked;
-  el["q-content"].hidden = !unlocked;
+  el["q-locked"].hidden = !lockedBox;
+  el["q-content"].hidden = !showContent;
   el["q-need"].textContent = fmt(new Decimal(COLLAPSE.unlockMatter), 0);
+  // 解锁过之后，提示框的措辞要变（否则会显示成"还没解锁"的误导文案）
+  if (lockedBox) {
+    if (el["q-perma-hint"]) el["q-perma-hint"].hidden = !perma;
+    if (el["q-locked-title"]) el["q-locked-title"].textContent = perma ? "量子系统 · 本轮待推进" : "量子系统未解锁";
+  }
 
+  // 标签：解锁过就**永不加锁**（这是本次修复的核心）；未解锁才显示"锁"
+  const tabUnlocked = perma || live;
   const qTab = el["tab-tag-quantum"];
-  qTab.textContent = unlocked ? fmt(state.quantum, 0) : "锁";
-  el["tab-quantum"].classList.toggle("locked", !unlocked);
+  qTab.textContent = showContent ? fmt(state.quantum, 0) : (perma ? "待推进" : "锁");
+  el["tab-quantum"].classList.toggle("locked", !tabUnlocked);
 
-  if (!unlocked) return;
+  if (!showContent) return;
 
   el["val-quantum"].textContent = fmt(state.quantum, 0);
   el["quantum-sub"].textContent =
     `已捕获 ${state.quantumPairs.toNumber()} 对 · 累计 ${state.quantumPairsTotal.toNumber()} 对`;
 
   // ── 量子涨落捕获（第三层）──
-  const need = quantumZpeRequirement(state.quantumPairs, quantumStepMult(state));
+  const need = quantumZpeRequirement(state.quantumPairs, quantumStepMult(state), state);
   const needLog = need.log10().toNumber();
   const curZpeLog = state.zpe.gt(0) ? state.zpe.log10().toNumber() : 0;
   el["quantum-pairs"].textContent = `${state.quantumPairs.toNumber()} 对`;
-  el["quantum-next-cost"].textContent = `1e${needLog.toFixed(0)} ZPE`;
+  // ★ 2025 统一科学计数法：原 `1e${needLog}` 有歧义（e 后跟小数）⇒ 规范成 `1.00eN` ✓
+  el["quantum-next-cost"].textContent = `${sci(Decimal.pow(10, needLog))} ZPE`;
   el["quantum-cur-zpe"].textContent = fmt(state.zpe);
   // 进度：用对数刻度量「离门槛还差几个数量级」
   const qProg = needLog > 0 ? Math.max(0, Math.min(1, curZpeLog / needLog)) : 0;
   el["quantum-bar"].style.width = `${(qProg * 100).toFixed(1)}%`;
   el["quantum-bar-text"].textContent = `${(qProg * 100).toFixed(1)}%`;
 
-  el["quantum-mult"].textContent = fmtMult(quantumEntropyMultiplier(state.quantum));
-  el["quantum-degain"].textContent = fmtMult(new Decimal(1).add(quantumDeGainBonus(state.quantum)));
-  // ★ 指数成长速率：这个数字**就是**引擎里那个项，不是估算。
-  //   玩家看到的速度 = d(log10 物质)/dt（单位：数量级/秒）
-  el["quantum-grow"].textContent = `${quantumGrowthRate(state.quantum).toFixed(4)} 阶/秒`;
-  el["quantum-demult"].textContent = fmtMult(new Decimal(1).add(quantumDeMultBonus(state.quantum)));
+  // ── ★ 量子给出的 5 条加成（**必须含引擎账** ⇒ 显示 == 实发）──
+  //   ⚠️ 2025 踩过：引擎账原来只乘在 `formulas.js` 的**调用处**，而这里显示"纯量子给的"部分
+  //      ⇒ 实测**面板显示 +21600，实发 +1e36**（差 1e31.7）✗ 典型的"显示 ≠ 实发"
+  //   ⇒ 修法：`engineBonusMult` 作为**第二参**传进同一个函数 ⇒ 两边共用一条公式 ✓
+  const ebmQ = engineBonusMult(state);
+  el["quantum-mult"].textContent = fmtMult(quantumEntropyMultiplier(state.quantum, ebmQ));
+  el["quantum-degain"].textContent = fmtMult(new Decimal(1).add(quantumDeGainBonus(state.quantum, ebmQ)));
+  // ★ 2025：R 退休后，这一行改显**粒子增幅速率 b**（替代 R 的那一位）。
+  //   b = b0·(1+√q/10)·里程碑·档位加速·infinityRateMult ⇒ 阈值软上限。
+  //   玩家看到的含义：粒子获得的时变增幅 `g = 10^(b·本轮时间)` 的**对数斜率**（阶/秒）。
+  el["quantum-grow"].textContent = `${particleBoostRate(state).toFixed(4)} 阶/秒`;
+  el["quantum-demult"].textContent = fmtMult(new Decimal(1).add(quantumDeMultBonus(state.quantum, ebmQ)));
+  // ★ 2025 新增：**量子 → ZPE 倍率的加法区加成**（ZPE 引擎设计稿第 3 条 ✓）
+  //   与引擎同一个函数 `quantumZpeMultBonus` ⇒ 显示即实发 ✓
+  if (el["quantum-zpemult"]) el["quantum-zpemult"].textContent = `+${fmt(quantumZpeMultBonus(state.quantum, ebmQ))}`;
+
+  // ── ★ 跨度层（2025 用户方案）：k 由量子给，把暗能量撬到 inf ──
+  //    与引擎**同一个函数**（`matterSpanExponent` / `matterSpanMult`）⇒ 显示即实发。
+  {
+    const spanOn = (state.spanDeBase ?? new Decimal(0)).gt(0);
+    el["span-badge"].textContent = spanOn ? "已开启" : "未开启";
+    el["span-badge"].classList.toggle("on", spanOn);
+    el["span-k"].textContent = matterSpanExponent(state).toFixed(4);
+    const mult = matterSpanMult(state);
+    el["span-mult"].textContent = fmtMult(mult);
+    el["span-base"].textContent = spanOn
+      ? sci(state.spanDeBase)          // ★ 2025 统一科学计数法（原 `"1e" + log10`）
+      : "—（需先买「门槛压平」）";
+  }
 
   // ── 梦想点一次性升级 ──
   let dOwned = 0;
@@ -978,36 +1391,50 @@ function renderQuantum(state, R) {
 
 function renderInfinity(state) {
   const cap = crunchThreshold();
-  const unlocked = state.peakMatter.gte(cap) || state.bigCrunchCount.gt(0);
+  // ★★ 2025（用户裁定）：`perma` = 曾经解锁过（**永不重置**）⇒ 标签**不再上锁**；
+  //   `live` = 本轮已经摸到物质硬顶或坍缩过 ⇒ 才显示内容。
+  //   原来只判本轮条件 ⇒ 永恒把 `peakMatter` / `bigCrunchCount` 清零后整页重新上锁 ✗
+  const perma = pageUnlocked(state, "infinity");
+  const live = state.peakMatter.gte(cap) || state.bigCrunchCount.gt(0);
 
-  el["inf-locked"].hidden = unlocked;
-  el["inf-content"].hidden = !unlocked;
+  el["inf-locked"].hidden = live;
+  el["inf-content"].hidden = !live;
   el["inf-need"].textContent = CRUNCH_AT_LABEL;
+  if (!live) {
+    if (el["inf-perma-hint"]) el["inf-perma-hint"].hidden = !perma;
+    if (el["inf-locked-title"]) el["inf-locked-title"].textContent = perma ? "无限系统 · 本轮待推进" : "无限系统未解锁";
+  }
 
   const tab = el["tab-tag-infinity"];
-  tab.textContent = unlocked ? fmt(state.infinityPoints, 0) : "锁";
-  el["tab-infinity"].classList.toggle("locked", !unlocked);
+  tab.textContent = live ? fmt(state.infinityPoints, 0) : (perma ? "待推进" : "锁");
+  el["tab-infinity"].classList.toggle("locked", !(perma || live));
 
-  if (!unlocked) return;
+  if (!live) return;
 
   el["val-infinity"].textContent = fmt(state.infinityPoints, 0);
   el["bigcrunch-count"].textContent = String(state.bigCrunchCount.toNumber());
   el["bigcrunch-gain"].textContent = fmt(bigCrunchGain(state), 0);
 
   const broken = state.brokenInfinity;
-  // ★ 触发阈值 / 过载：未打破是**硬顶**，打破后是**过载拐点**（量子会把它往上推）
-  const ovT = overloadThreshold(state);
-  const ov = overloadFactor(state);
+  // ★★ 2025（用户裁定）：**过载按「物质获得速率」触发，不再按物质数量** ——
+  //   阈值 = `Number.MAX_VALUE = 1.8e308`（双精度上限，卡的是"每秒获得多少"）。
+  //   ⇒ 界面必须显示**速率**口径（原来显示"距拐点 N 阶"= 数量口径，已过时 ✗）
+  const ovT = overloadThreshold(state);          // 仍用于"打破无限后的数量门槛"显示
+  const preRate = matterRate(state);             // 未削减的获得速率（唯一入口）
+  const ov = overloadFactor(state, preRate);
   el["bigcrunch-need"].textContent = broken
-    ? `1e${ovT.toNumber().toFixed(2)}`
+    // ★ 2025 统一科学计数法（原 `1e${ovT}` 有歧义：看着像 e 后跟小数）
+    ? sci(Decimal.pow(10, ovT.toNumber()))
     : CRUNCH_AT_LABEL;
   if (!broken) {
     el["overload-state"].textContent = "硬顶（未打破）";
   } else if (ov.gte(1)) {
-    el["overload-state"].textContent = `无（距拐点 ${fmt(ovT.sub(matterLog10(state)), 2)} 阶）`;
+    // 距触发还差几个数量级（**对数域**算，避免 1e1943 溢出成 Infinity ✗）
+    const gap = OVERLOAD.rateThresholdLog10.toNumber() - preRate.log10().toNumber();
+    el["overload-state"].textContent = `无（速率距 1.8e308 还差 ${gap.toFixed(1)} 阶）`;
   } else {
-    const over = matterLog10(state).sub(ovT).toNumber();
-    el["overload-state"].textContent = `×${fmt(ov, 3)}（超 ${over.toFixed(1)} 阶）`;
+    const over = preRate.log10().toNumber() - OVERLOAD.rateThresholdLog10.toNumber();
+    el["overload-state"].textContent = `×${fmt(ov, 3)}（速率超 1.8e308 已 ${over.toFixed(1)} 阶）`;
   }
 
   const canCrunch = broken && canBigCrunch(state);
@@ -1018,7 +1445,7 @@ function renderInfinity(state) {
     ? "到顶强制触发"
     : canCrunch ? "可以坍缩" : "物质不足";
   el["bigcrunch-desc"].textContent = broken
-    ? `手动触发。跑得越深收益越高；超过拐点会进入**过载**，产出速率每 ${OVERLOAD.halvingOrders} 阶减半`
+    ? `手动触发。跑得越深收益越高；获得速率超过 1.8e308 后进入**过载**，速率按 1/(1+超出/${OVERLOAD.knee}) 渐近削弱`
     : "物质到 1e308.25 会强制大坍缩（收益固定）";
 
   const bk = el["btn-break-infinity"];
@@ -1047,19 +1474,70 @@ function renderInfinityUpgrades(state) {
   for (const id of INFINITY_ORDER) {
     const cfg = INFINITY_UPGRADES[id];
     const btn = $(`inf-btn-${id}`);
+
+    // ★★★ 2025 修复（用户报告：「ip点倍增初始×1，购买一次后应该 ×2，但我看着还是 ×1」）：
+    //   `ipDouble`（① 无限增幅）**被移到了置顶的静态壳**，它的 id 是 `inf-ipdouble-row`
+    //   （小写 d！）而不是 `inf-btn-ipDouble` ⇒ 本循环的 `$(\`inf-btn-${id}\`)` 取不到
+    //   ⇒ `if (!btn) continue` **每帧把它跳过** ⇒ 那一行的
+    //      `inf-ipDouble-state`（"Lv N"）/ `inf-ipDouble-cost`（价格）/ `max-ipDouble-n`
+    //      **从来没被更新过**，永远停在 index.html 的静态初值 "Lv 0" / "—" / "0" ✗
+    //   （实发侧 `ipDoubleMult()` 一直是对的 ⇒ 这是纯"显示 ≠ 实发"的显示侧 bug）
+    //   ⇒ 单独在这里渲染它，然后 continue（它没有走通用分支的那些元素）✓
+    if (id === "ipDouble") {
+      const lvIpD = state.ipDoubleLevel ?? D(0);
+      const effIpD = infinityUpgradeEffect(state, id);       // ★ 与实发同源（唯一入口）
+      const costIpD = infinityUpgradeCost(state, id);
+      // ★★★ 2025（用户裁定）：**删掉"需先打破无限"这个门槛**。
+      //   用户原话：「无限增幅开局买不了？我们无限一次的时间这么长，开局还买不到重要的升级不扯淡么？
+      //             移除购买无限增幅需要打破无限这个要求。因为打破无限本身也需要 128 个无限点」
+      //   ⇒ 合理：**IP 的第一个来源就是大坍缩**，而打破无限要 128 IP ⇒
+      //     在打破之前，① 是**唯一**能花 IP 的地方 ⇒ 挡住它等于"IP 完全没用" ✗
+      //   ⚠️ 实发侧本来就没这个门槛（`buyInfinityUpgrade` 只对 `thresholdFlat` 强制）
+      //      ⇒ 这又是一处**"显示门槛 ≠ 实发门槛"**（显示比实发严）—— 修的是 UI ✓
+      const canIpD = state.infinityPoints.gte(costIpD);
+      if (el["inf-ipDouble-state"]) el["inf-ipDouble-state"].textContent = `Lv ${fmt(lvIpD, 0)}`;
+      if (el["inf-ipDouble-cost"]) {
+        el["inf-ipDouble-cost"].textContent = `花费 ${fmt(costIpD, 0)} 无限点`;
+      }
+      if (el["inf-ipDouble-desc"]) {
+        // 与实发同源：`effIpD.mult` 就是 `ipDoubleMult(state)`（×2^等级）
+        el["inf-ipDouble-desc"].textContent = lvIpD.gt(0)
+          ? `无限点收益 ×${fmt(effIpD.mult, 0)}（下一级 ×${fmt(effIpD.mult.mul(cfg.effectMult), 0)}）`
+          : cfg.desc;
+      }
+      const nIpD = ipDoubleAffordableIn(lvIpD.toNumber(), state.infinityPoints);
+      if (el["max-ipDouble-n"]) el["max-ipDouble-n"].textContent = fmt(nIpD, 0);
+      const bbIpD = el["inf-btn-ipDouble"];
+      if (bbIpD) {
+        bbIpD.classList.toggle("affordable", canIpD);
+        bbIpD.disabled = !canIpD;
+      }
+      if (el["btn-max-ipDouble"]) el["btn-max-ipDouble"].disabled = !(nIpD > 0);
+      owned += lvIpD.gt(0) ? 1 : 0;
+      continue;
+    }
+
     if (!btn) continue;
     const cost = infinityUpgradeCost(state, id);
     const bought = !cfg.repeatable && infinityUpgradeOwned(state, id);
+    //   （原来这行还含 "coinage" ⇒ 删铸币时被整行删掉 ✗）
     const level = cfg.repeatable ? (state.ipDoubleLevel?.toNumber() ?? 0) : 0;
     if (bought || level > 0) owned++;
-    const can = !bought && ip.gte(cost);
+    // ★ 门槛与价格一样，必须**同源**地进"可购买判定 + 文案"。
+    //   踩过（同一类，且这次是我自己埋的）：`thresholdFlat`（门槛压平）在引擎里被
+    //   `brokenInfinity` 挡住，但界面只比 IP ⇒ 会把它标成可购买、也不说缺什么 ✗
+    //   ⇒ 与虚空升级的 `requireZpe` 用同一套写法。
+    const gateOk = id !== "thresholdFlat" || state.brokenInfinity;
+    const can = !bought && gateOk && ip.gte(cost);
     btn.classList.toggle("affordable", can);
     btn.classList.toggle("maxed", bought);
     btn.disabled = bought;
     $(`inf-${id}-state`).textContent = cfg.repeatable
       ? `Lv ${fmt(state.ipDoubleLevel ?? 0, 0)}`
       : bought ? "已购买 ✓" : "未购买";
-    $(`inf-${id}-cost`).textContent = bought ? "已生效" : `花费 ${fmt(cost, 0)} 无限点`;
+    $(`inf-${id}-cost`).textContent = bought
+      ? "已生效"
+      : `花费 ${fmt(cost, 0)} 无限点` + (gateOk ? "" : "｜需先打破无限");
 
     // ★ 效果文本从公式推导（不许手写），买下后显示**当前实际值**
     const eff = infinityUpgradeEffect(state, id);
@@ -1078,7 +1556,8 @@ function renderInfinityUpgrades(state) {
         (eff.capped ? "　⚠️ 已到 30 分钟上限，该大坍缩了" : "");
     } else if (cfg.startLog10 != null) {
       descText = bought
-        ? `每次大坍缩后以 1e${eff.activeLog10} 物质开局（当前生效的一档）`
+        // ★ 2025 统一科学计数法（原 `1e${activeLog10}` 有歧义）
+        ? `每次大坍缩后以 ${sci(Decimal.pow(10, eff.activeLog10))} 物质开局（当前生效的一档）`
         : cfg.desc;
     } else if (cfg.rateMult != null) {
       descText = bought
@@ -1091,9 +1570,11 @@ function renderInfinityUpgrades(state) {
 
   // 收入明细：深度部分 + 耗时部分（④）
   const elapsed = state.infinityElapsed ?? 0;
+  // ★★ 2025：这里原来手写 `Decimal.pow(effectMult, 等级)` —— 与实发侧脱节的第二处 ✗
+  //   统一走唯一入口 `ipDoubleMult(state)`（见 engine.js 同处的注释）
   const perHour = state.ipTimeBought
     ? new Decimal(3600).div(INFINITY_UPGRADES.ipTime.secondsPerPoint)
-      .mul(Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0))
+      .mul(ipDoubleMult(state))
     : new Decimal(0);
   el["inf-income"].textContent = perHour.gt(0)
     ? `${fmt(perHour, 0)} 点/小时（耗时部分）`
@@ -1105,19 +1586,52 @@ function renderInfinityUpgrades(state) {
 // 事件绑定
 // ══════════════════════════════════════════════════════════
 
+/**
+ * 给 **index.html 里静态写死**的那些"升级 / 解锁"按钮补上乘区色。
+ *
+ * 为什么要有这个函数（用户 2025 指出）：
+ *   数据驱动的五张升级列表（主升级 / 虚空 / 暗能量 / 无限 / 梦想）都走 `applyZone()` ✓，
+ *   但**静态按钮**（熵阱、ZPE 引擎升格、相变仪解锁、坍缩加速）的颜色是
+ *   直接写死在 `index.html` 的 `class="btn zone zone-xxx"` 上的 ✗ —— 于是：
+ *     · 换乘区时它们**不会跟着变**（两处数据源 ⇒ 迟早脱节）；
+ *     · 而且 `-max`（买满）那几个**一个颜色都没有** ✗
+ *   ⇒ 统一改成从这里按 `ZONE_OF` 上色：**唯一数据源**，与其它列表同一套规矩 ✓
+ *
+ * 判据仍是「只看**加成作用的位置**」，不看它属于哪个页面（见 config.js 的 `ZONE_OF`）。
+ * 只建一次（与 `buildZpeMechanisms` 同理），在 `render()` 里做会每帧重建 ⇒ hover 闪烁 ✗
+ */
+function applyStaticZones() {
+  const pairs = [
+    ["btn-buy-trap", "trap"],                       // 熵阱 → 熵产出
+    ["btn-unlock-zpe-engine", "zpeEngine"],         // 启动引擎 → ZPE
+    ["btn-buy-zpe-engine", "zpeEngine"],
+    ["btn-buy-zpe-engine-max", "zpeEngine"],
+    ["btn-unlock-transmuter", "transmuter"],        // 相变仪 → 暗能量
+    ["btn-bigcrunch", "bigcrunch"],                 // 大坍缩 → 无限点收益
+    ["btn-break-infinity", "breakInfinity"],        // 打破无限 → 无限点收益
+  ];
+  for (const [elId, zoneId] of pairs) {
+    const node = el[elId] ?? $(elId);
+    if (node) applyZone(node, zoneId);
+  }
+}
+
 export function initUI(handlers) {
   cache();
+  applyStaticZones();     // ★ 静态按钮的乘区色（唯一数据源 = ZONE_OF）
   buildUpgrades();
   buildVoidUpgrades();
   buildZpeMechanisms();   // ★ 三条机制只建一次（放在 render 里会每帧重建 → hover 闪烁）
   buildTierMilestones();  // ★ 档位里程碑同理
+  buildEternityMilestones();  // ★ 2025：永恒里程碑（只建一次）
   buildDeUpgrades();
   buildMilestones();
   buildLegend();
   buildDreamUpgrades();
   buildInfinityUpgrades();
   setupTabs();
-  activateTab("void");
+  // ★ 2025：默认打开「主控台」（原左列的 5 张卡并进标签页后成为第一个面板）
+  activateTab("console");
 
   el["btn-click"].addEventListener("click", handlers.onClick);
   el["btn-buy-trap"].addEventListener("click", handlers.onBuyTrap);
@@ -1130,6 +1644,20 @@ export function initUI(handlers) {
   //   是烟测的「el[] 未进 cache」反向检查抓出来的。）
   el["btn-bigcrunch"].addEventListener("click", handlers.onBigCrunch);
   el["btn-break-infinity"].addEventListener("click", handlers.onBreakInfinity);
+  // ★★★ 2025：永恒升级「永恒增幅」（设计稿 33~35 行）
+  //   ⚠️ 用 `?.` —— 元素若不在（旧 html 缓存）也不该让整段初始化抛错 ✗
+  el["btn-eternity-upg-epMult"]?.addEventListener("click", () => handlers.onBuyEpMult(false));
+  el["btn-max-eternity-upg-epMult"]?.addEventListener("click", () => handlers.onBuyEpMult(true));
+  // ★★★ 2025：按乘区上色（新增的 `eternity` 乘区，见 config.js 的 ZONES / ZONE_OF）——
+  //   用户要求：「所有的加成按钮都应根据代码中的加成落点提供颜色」
+  applyZone(el["btn-eternity-upg-epMult"], "epMult");
+  el["btn-max-eternity-upg-epMult"]?.classList.add("zone", `zone-${ZONE_OF.epMult}`);
+  // ★★★ 2025（`NEKO.md` §10）：**三个好感度道具**的按钮 —— 全部走 `handlers.onUseNekoItem`
+  //   （它内部调 `useNekoItem` = **唯一入口**，扣款与好感度写入都在那里 ✓）
+  //   ⚠️ 那对 `±8` 调试按钮已**删除** —— 道具实装后不再需要（它们是"没有道具时的可见性补丁"）✓
+  for (const it of Object.values(NEKO_ITEMS)) {
+    el[`btn-neko-item-${it.id}`]?.addEventListener("click", () => handlers.onUseNekoItem(it.id));
+  }
 
   for (const cfg of Object.values(REPEATABLE)) {
     $(`btn-upg-${cfg.id}`)?.addEventListener("click", () => handlers.onBuyRepeatable(cfg.id, false));
@@ -1151,13 +1679,12 @@ export function initUI(handlers) {
   for (const id of INFINITY_ORDER) {
     $(`inf-btn-${id}`)?.addEventListener("click", () => handlers.onBuyInfinity(id));
   }
+  // ★ 2025：① 置顶行的「买满」（形态与升级中心的买满按钮一致）
+  el["btn-max-ipDouble"]?.addEventListener("click", () => handlers.onBuyIpDoubleMax());
 
   // ── ZPE 引擎（虚空科技的第二个子页）──
   el["btn-unlock-zpe-engine"].addEventListener("click", handlers.onUnlockZpeEngine);
-  el["btn-buy-accel"].addEventListener("click", () => handlers.onBuyAccel(false));
-  el["btn-buy-accel-max"].addEventListener("click", () => handlers.onBuyAccel(true));
-  el["btn-buy-coinage"].addEventListener("click", () => handlers.onBuyCoinage(false));
-  el["btn-buy-coinage-max"].addEventListener("click", () => handlers.onBuyCoinage(true));
+  el["btn-eternity"].addEventListener("click", handlers.onEternity);
   el["btn-buy-zpe-engine"].addEventListener("click", () => handlers.onBuyZpeEngine(false));
   el["btn-buy-zpe-engine-max"].addEventListener("click", () => handlers.onBuyZpeEngine(true));
 

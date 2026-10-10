@@ -78,6 +78,9 @@
         <span class="zf zone-dream" id="gm-dream">梦想点 ×1.00</span>
         <span class="zf zone-countfreq" id="gm-countfreq">计数频率 ×1.00</span>
         <span class="zf zone-de" id="gm-de">暗能量 ×1.00</span>
+        <!-- ★★★ 2025（NEKO.md §7）：好感度那一层**指数**（默认隐藏；生效时才显示）——
+             必须显示，否则 `三个因子相乘 ≠ 全局加成`（还要再取幂）⇒ 显示自相矛盾 ✗ -->
+        <span class="zf zone-dm" id="gm-neko" hidden>好感度 ^1</span>
       </div>
     </div>
   </div>
@@ -92,71 +95,26 @@
     <div class="col">
 
       <!-- 点击区 -->
-      <div class="card">
-        <h2>操作</h2>
-        <div class="click-zone">
-          <button id="btn-click">
-            点击生成熵
-            <span class="sub" id="click-gain">+10 熵 / 次</span>
-          </button>
-        </div>
-      </div>
-
-      <!-- 升级中心 -->
-      <div class="card">
-        <h2>升级中心 <span class="badge" id="upgrade-count">0 项可购买</span></h2>
-        <div class="stack" id="upgrade-list"></div>
-      </div>
-
-      <!-- 熵阱 -->
-      <div class="card">
-        <h2>熵阱 <span class="badge" id="trap-badge">0</span></h2>
-        <button class="btn zone zone-entropy" id="btn-buy-trap">
-          <div class="btn-row">
-            <span class="btn-name">购买熵阱</span>
-            <span class="btn-lv" id="trap-lv">0 个</span>
+      <!-- ══ 面板：主控台（原左列的 5 张卡并进标签页后成为第一个面板）══
+     ★ 2025 用户要求：「左侧的主页面也最好并入右侧列表，标题为主控台」。
+     顺序：操作 / 升级中心 / 熵阱 / 数值明细 / 日志 ✓（与原左列阅读顺序一致） -->
+      <div class="tabs" id="tabs">
+          <!-- ★ 主控台：**三个子页**（用户 2025 裁定）——
+               「neko 页面与梦想页面（自动化）应该归属于主控台的子页面
+                 （类似虚空科技下的子页面表现形式）」
+               子页：主控台本体 / 梦想 / 猫猫 ✓
+               ⚠️ 用 div 包一层是因为 <button> 里不能再放 <button>（与虚空科技同一写法）-->
+          <div class="tab-wrap" id="tab-wrap-console">
+            <button class="tab" id="tab-console" data-tab="console" style="--zone:#90a4ae">
+              <span class="dot"></span>主控台
+            </button>
+            <div class="tab-flyout" id="tab-flyout-console">
+              <button class="flyout-item" data-tab="console" id="flyout-console-core">主控台</button>
+              <button class="flyout-item" data-tab="dream" id="flyout-console-dream">梦想（自动化）</button>
+              <button class="flyout-item" data-tab="neko" id="flyout-console-neko">猫猫</button>
+            </div>
           </div>
-          <div class="btn-desc">每个熵阱每秒产 1 熵，同时产 ZPE —— <b>右键买满</b></div>
-          <div class="btn-cost" id="trap-cost">花费 0.1 物质</div>
-        </button>
-        <div class="detail" style="margin-top:12px">
-          <div><span>实际生效数量</span><b id="trap-effective" class="glow-green">0</b></div>
-          <div><span>熵凝聚规则</span><b id="entropy-rule">消耗 100 熵 → 1 粒子</b></div>
-        </div>
-      </div>
 
-      <!-- 数值明细 -->
-      <div class="card">
-        <h2>数值明细</h2>
-        <div class="detail">
-          <div><span>熵产出</span><b id="d-entropy-rate">0</b></div>
-          <div><span>粒子产出</span><b id="d-particle-rate">0</b></div>
-          <div><span>物质产出</span><b id="d-matter-rate">0</b></div>
-          <div><span>ZPE 产出</span><b id="d-zpe-rate">0</b></div>
-          <div><span>ZPE 倍率</span><b id="d-zpe-mult">×1.00</b></div>
-          <div><span>ZPE 产出</span><b id="d-zpe-prod">×1.00</b></div>
-          <div><span>暗能量倍率</span><b id="d-de-mult">×1.00</b></div>
-          <div><span>ZPE 惩罚</span><b id="d-zpe-penalty">无</b></div>
-          <div><span>累计点击</span><b id="d-clicks">0</b></div>
-          <div><span>游戏时长</span><b id="d-playtime">0s</b></div>
-        </div>
-      </div>
-
-      <!-- 日志 -->
-      <div class="card">
-        <h2>日志</h2>
-        <div id="log-panel"></div>
-      </div>
-
-    </div>
-
-    <!-- ─────────── 右列：标签页 ─────────── -->
-    <div class="col">
-
-      <div class="card">
-
-        <!-- 标签栏 -->
-        <div class="tabs" id="tabs">
           <!-- ★ 虚空科技有**两个子页**：悬停（或键盘 focus）时浮出两条入口。
                用 div 包一层是因为 <button> 里不能再放 <button>。 -->
           <div class="tab-wrap" id="tab-wrap-void">
@@ -174,15 +132,216 @@
           <button class="tab" id="tab-quantum" data-tab="quantum" style="--zone:#ff3b30">
             <span class="dot"></span>量子<span class="tag" id="tab-tag-quantum">锁</span>
           </button>
-          <button class="tab" id="tab-infinity" data-tab="infinity" style="--zone:#ffd600">
-            <span class="dot"></span>无限<span class="tag" id="tab-tag-infinity">锁</span>
-          </button>
+          <div class="tab-wrap" id="tab-wrap-infinity">
+            <button class="tab" id="tab-infinity" data-tab="infinity" style="--zone:#ffd600">
+              <span class="dot"></span>无限<span class="tag" id="tab-tag-infinity">锁</span>
+            </button>
+            <div class="tab-flyout" id="tab-flyout-infinity">
+              <button class="flyout-item" data-tab="infinity" id="flyout-inf-core">无限升级</button>
+              <button class="flyout-item" data-tab="infdeep" id="flyout-inf-deep">坍缩里程碑 · 无限挑战</button>
+            </div>
+          </div>
           <!-- ★ 永恒：先**只保留标签页**（和当初开发无限层一样），内容等设计定了再填。
                颜色用 --eternity（#673ab7 紫）：新层，不是新乘区。 -->
           <button class="tab" id="tab-eternity" data-tab="eternity" style="--zone:var(--eternity)">
             <span class="dot"></span>永恒<span class="tag" id="tab-tag-eternity">锁</span>
           </button>
         </div>
+
+        <div class="tab-panel" id="panel-console">
+  <div class="card">
+          <h2>操作</h2>
+          <div class="click-zone">
+            <button id="btn-click">
+              点击生成熵
+              <span class="sub" id="click-gain">+10 熵 / 次</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- 升级中心 -->
+        <div class="card">
+          <h2>升级中心 <span class="badge" id="upgrade-count">0 项可购买</span></h2>
+          <div class="stack" id="upgrade-list"></div>
+        </div>
+
+        <!-- 熵阱 -->
+        <div class="card">
+          <h2>熵阱 <span class="badge" id="trap-badge">0</span></h2>
+          <button class="btn" id="btn-buy-trap">
+            <div class="btn-row">
+              <span class="btn-name">购买熵阱</span>
+              <span class="btn-lv" id="trap-lv">0 个</span>
+            </div>
+            <div class="btn-desc">每个熵阱每秒产 1 熵，同时产 ZPE —— <b>右键买满</b></div>
+            <div class="btn-cost" id="trap-cost">花费 0.1 物质</div>
+          </button>
+          <div class="detail" style="margin-top:12px">
+            <div><span>实际生效数量</span><b id="trap-effective" class="glow-green">0</b></div>
+            <div><span>熵凝聚规则</span><b id="entropy-rule">消耗 100 熵 → 1 粒子</b></div>
+          </div>
+        </div>
+
+        <!-- 数值明细 -->
+        <div class="card">
+          <h2>数值明细</h2>
+          <div class="detail">
+            <div><span>熵产出</span><b id="d-entropy-rate">0</b></div>
+            <div><span>粒子产出</span><b id="d-particle-rate">0</b></div>
+            <div><span>物质产出</span><b id="d-matter-rate">0</b></div>
+            <div><span>ZPE 产出</span><b id="d-zpe-rate">0</b></div>
+            <div><span>ZPE 倍率</span><b id="d-zpe-mult">×1.00</b></div>
+            <div><span>ZPE 升级产出</span><b id="d-zpe-prod">×1.00</b></div>
+            <div><span>暗能量倍率</span><b id="d-de-mult">×1.00</b></div>
+            <div><span>ZPE 惩罚</span><b id="d-zpe-penalty">无</b></div>
+            <div><span>累计点击</span><b id="d-clicks">0</b></div>
+            <div><span>游戏时长</span><b id="d-playtime">0s</b></div>
+          </div>
+        </div>
+
+        <!-- 日志 -->
+        <div class="card">
+          <h2>日志</h2>
+          <div id="log-panel"></div>
+        </div>
+      </div>
+
+      <!-- ══════════════════════════════════════════════════════════
+           ★★★ 2025：**梦想（自动化）子页**（用户裁定：归属主控台子页）
+             ⚠️ 用户原话：「梦想页面我目前**允许只有个壳子**」⇒ 这里先只放壳 + 说明 ✓
+           ══════════════════════════════════════════════════════════ -->
+      <div class="tab-panel" id="panel-dream" hidden>
+        <div class="card">
+          <h2>梦想（自动化）<span class="badge" id="dream-page-badge">壳子</span></h2>
+          <div class="shell-note">
+            这一页还没实装 —— 按你的裁定，**先留壳**。<br>
+            它将承载：<b>自动化开关</b>（∞ 层 / 各层的自动购买）、<b>梦想点消费</b>、
+            以及日志系统的迁入（设计稿第 27 行「日志系统输出会调整到梦想页面」）。<br>
+            <span class="dim">当前的自动化开关仍在各自面板里（例：ZPE 页的「自动化」小节）。</span>
+          </div>
+        </div>
+
+        <!-- ══════ 自动化状态（从 ZPE 页搬进来，让这一页不只是空壳）══════ -->
+        <div class="card">
+          <h2>自动化状态</h2>
+          <div class="detail">
+            <div><span>主升级 / 熵阱（阈值自动获取）</span><b id="auto-acquire">未开启</b></div>
+            <div><span>暗能量升级自动购买</span><b id="auto-de">未开启</b></div>
+          </div>
+          <p class="note">
+            「阈值自动获取」= 达成条件即拿，<b>不扣钱</b>（来自虚空升级 <b>v9</b>）。
+            暗能量那 5 条来自<b>梦想升级</b>（相变 / 加速 / 增幅 / 斜率自动化）。
+          </p>
+        </div>
+      </div>
+
+      <!-- ══════════════════════════════════════════════════════════
+           ★★★ 2025：**猫猫子页**（`docs/NEKO.md` §7 / 设计稿 §10 / 用户裁定）
+             · 归属：主控台的子页 ✓
+             · 布局：**两列**（用户原话：「neko 页面由于要有对话功能，
+               建议子页面下分出两列（左侧和右侧）」）
+                 左 = 好感度 / 档位 / 道具（游戏侧）
+                 右 = 对话（等 SDK；现在占位）
+           ══════════════════════════════════════════════════════════ -->
+      <div class="tab-panel" id="panel-neko" hidden>
+        <div class="neko-cols">
+          <!-- ── 左列：游戏侧数据 ── -->
+          <div class="col">
+            <div class="card">
+              <h2>好感度 <span class="badge" id="neko-badge">未接入 SDK</span></h2>
+              <div class="detail" style="margin-bottom:10px">
+                <div><span>当前好感度</span><b id="neko-affinity" class="glow-dm">0</b></div>
+                <div><span>全局加成</span><b id="neko-exponent" class="glow-accent">^1（未生效）</b></div>
+                <div><span>下一档</span><b id="neko-next">好感度 &gt; 25 ⇒ 全局 ^1.002</b></div>
+              </div>
+              <div class="bar" style="margin-bottom:10px"><i id="neko-bar" style="background:linear-gradient(90deg,#5a0d08,#ff3b30)"></i><span id="neko-bar-text">0 / 100</span></div>
+              <!-- 档位阶梯：三条由 ui.js 从 `NEKO.tiers` 推导，不写死 ✓ -->
+              <div class="detail" id="neko-tier-list"></div>
+              <!-- ★ 2025：**波动额度**现在更该显示 —— 三个道具的真实约束就是它（§7 每 5 分钟 < 8 点）-->
+              <div class="detail">
+                <div><span>本轮波动额度</span><b id="neko-drift">每 5 分钟 &lt; 8 点</b></div>
+              </div>
+              <p class="note">
+                范围 <b>[-100, 100]</b>（正值档位判定不受 100 限制）。
+                <b>负面好感度不影响游戏进程</b> —— 指数只向上偏。
+              </p>
+            </div>
+
+            <div class="card">
+              <h2>道具 <span class="badge" id="neko-item-badge">0 / 3</span></h2>
+              <!-- ★★★ 2025（`NEKO.md` §10）：三个道具**已实装**（用户裁定"先按目前要求做，不管平衡性"）——
+                   猫条免费 / 棒棒糖消耗**当前所有物质** / 猫爪换取**当前所有 ZPE**
+                   ⚠️ 数值（能否购买 / 实际增量）由 ui.js 从 `useNekoItem` 的同一套判据推导，**不写死** ✗ -->
+              <div class="stack" id="neko-item-list">
+                <div class="btn-row">
+                  <button class="btn" id="btn-neko-item-catFood">
+                    <span class="btn-name">猫条</span>
+                    <span class="btn-lv" id="neko-item-catFood-gain">好感度 +1</span>
+                    <div class="btn-desc">免费 —— 唯一成本是**每 5 分钟的波动额度**</div>
+                    <div class="btn-cost" id="neko-item-catFood-cost">免费</div>
+                  </button>
+                </div>
+                <div class="btn-row">
+                  <button class="btn" id="btn-neko-item-lollipop">
+                    <span class="btn-name">棒棒糖</span>
+                    <span class="btn-lv" id="neko-item-lollipop-gain">好感度 +3</span>
+                    <div class="btn-desc">消耗<b>当前所有物质</b></div>
+                    <div class="btn-cost" id="neko-item-lollipop-cost">需要物质</div>
+                  </button>
+                </div>
+                <div class="btn-row">
+                  <button class="btn" id="btn-neko-item-paw">
+                    <span class="btn-name">猫爪</span>
+                    <span class="btn-lv" id="neko-item-paw-gain">好感度 +5</span>
+                    <div class="btn-desc">换取<b>当前所有 ZPE</b></div>
+                    <div class="btn-cost" id="neko-item-paw-cost">需要 ZPE</div>
+                  </button>
+                </div>
+              </div>
+              <p class="note" id="neko-item-note">
+                ⚠️ 三个道具<b>共用</b>「每 5 分钟 &lt; 8 点」的波动额度 ⇒ 一次全用会撞额度上限
+                （这是 <code>docs/NEKO.md</code> §7 的规定）。名义增量 1 / 3 / 5 是<b>稿子没写、我补的</b>。
+              </p>
+            </div>
+          </div>
+
+          <!-- ── 右列：对话（等 SDK）── -->
+          <div class="col">
+            <div class="card">
+              <h2>对话 <span class="badge" id="neko-chat-badge">未接入</span></h2>
+              <div class="neko-chat" id="neko-chat">
+                <div class="neko-msg her" id="neko-msg-placeholder">
+                  我是猫猫。接入 <b>N.E.K.O</b> 之后，这里会变成你和我聊天的地方。
+                </div>
+                <div class="neko-msg you">
+                  （未接入 SDK ⇒ 对话区是占位。好感度与全局加成在左侧**已经可用**。）
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <h2>接入状态</h2>
+              <div class="detail">
+                <div><span>SDK</span><b id="neko-sdk-state">未接入</b></div>
+                <div><span>接入后猫娘可</span><b>主动调控好感度（波动 &lt; 16 / 5 分钟）</b></div>
+                <div><span>接入方案</span><b>走 <code>neko-minigame-sdk</code></b></div>
+              </div>
+              <p class="note" id="neko-note">
+                <b>未接入 N.E.K.O</b>：好感度由游戏内原生机制驱动（道具等），
+                <b>不接入也照常可用</b>。接入后猫娘可主动调控它，并在这里与你对话。
+                技术方案见 <code>docs/NEKO.md</code>。
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    
+
+      <div class="card">
+
+        <!-- 标签栏 -->
+        
 
         <!-- ══ 面板：虚空 ══ -->
         <div class="tab-panel" id="panel-void">
@@ -202,26 +361,26 @@
             <span class="big">&#9881;</span>
             真空零点能引擎
             <div class="cond">
-              <div>花费 <b id="zpe-engine-unlock-cost">10</b> 无限点 → 解锁</div>
-              <div style="margin-top:6px">等级用无限点买，同时给三条加成</div>
+              <div>需要 <b id="zpe-engine-unlock-cost">1 次大坍缩</b> → 解锁（并赠送 1 级）</div>
+              <div style="margin-top:6px">等级用无限点买，同时给五条加成</div>
             </div>
             <button class="btn" id="btn-unlock-zpe-engine" style="margin-top:12px">启动引擎</button>
           </div>
 
           <div id="zpe-engine-content" hidden>
             <p class="rule">
-              解锁 <b>10</b> 无限点｜价格 <b>5 × 2^等级</b>，第 10 级起再 ×10
+              解锁 <b>1 次大坍缩</b>（并赠送 1 级，不花无限点）｜价格 <b>5 × (等级+1)³</b>（三次方：越买越贵，但不再指数爆炸）<b>100 / 1000 / 10000</b> 级起各再抬一次涨价斜率
             </p>
 
             <div class="detail" style="margin-bottom:12px">
               <div><span>引擎等级</span><b id="zpe-engine-level" class="glow-accent">0</b></div>
               <div><span>ZPE 产出</span><b id="zpe-engine-prod" class="glow-accent">×1.00</b></div>
-              <div><span>公式指数</span><b id="zpe-engine-exp">0.020</b></div>
+              <div><span>加法区加成</span><b id="zpe-engine-exp">×1</b></div>
               <div><span>无限点</span><b id="zpe-engine-ip" class="glow-gold">0</b></div>
             </div>
 
             <div class="btn-main">
-              <button class="btn zone zone-zpe" id="btn-buy-zpe-engine">
+              <button class="btn" id="btn-buy-zpe-engine">
                 <div class="btn-row">
                   <span class="btn-name">引擎升格</span>
                   <span class="btn-lv" id="zpe-engine-afford">可买 0 级</span>
@@ -232,13 +391,22 @@
               <button class="btn-max" id="btn-buy-zpe-engine-max" title="连续购买直到买不起">买满</button>
             </div>
 
-            <h2 style="margin-top:16px">三条机制</h2>
+            <h2 style="margin-top:16px">引擎机制（5 条）</h2>
             <div class="stack" id="zpe-engine-mechanisms"></div>
 
+            <!-- ⚠️ 这里刻意**只留一句**。原来堆了三段散文（第 ⑤ 条的完整论证 + 两条红线），
+                 23 行说明把面板压得很难看（用户反馈「文字显然太多影响观感」）。
+                 判据没丢，只是搬到了代码注释里（项目规矩：理由住在注释 / docs ✓）：
+                   · 第 ⑤ 条为什么必需 → src/config.js 的 `matterTotalExponent()` 注释
+                   · 环增益与 b区 单调有界两条红线 → tools/zpe-engine-lab.mjs / cap-monotonic-lab.mjs 的断言
+            -->
             <p class="note">
-              等级越高，三条机制依次解锁（5 级吃计数频率、10 级抬公式指数）。
-              唯一红线：ZPE 的自反馈指数必须 <b>&lt; 1</b>（否则有限时间爆炸）。
+              ①②③④ 只改产出的<b>高度</b>；<b>⑤ 改形状</b>——整个 a区括号取幂
+              （<code>{ 前四条 } ^ k</code>，k 由等级给、1 → 26 单调饱和）。
+              红线：环增益 &lt; 1 ｜ k 单调有界（各由 lab 断言守住）。
             </p>
+            <!-- ★ 2025：「自动化状态」已移到**主控台 → 梦想（自动化）子页** ✓
+                 （用户裁定子页归属；留在这里会与那一页**重复 id** ✗）-->
           </div>
         </div>
 
@@ -246,9 +414,13 @@
         <div class="tab-panel" id="panel-de" hidden>
           <div id="de-locked" class="locked">
             <span class="big">&#127761;</span>
-            相变仪未解锁
+            <span id="de-locked-title">相变仪未解锁</span>
             <div class="cond" id="de-unlock-cond"></div>
             <button class="btn" id="btn-unlock-transmuter" style="margin-top:12px">启动相变仪</button>
+            <!-- ★★ 2025：**已解锁过**（第一次永恒之后）的说明；由 renderDe 控制显隐 -->
+            <div class="cond" id="de-perma-hint" hidden style="margin-top:8px">
+              <div><b>已解锁过</b>：本轮重新满足上面的条件即可再次启动（进度不丢）</div>
+            </div>
           </div>
 
           <div id="de-content" hidden>
@@ -291,10 +463,16 @@
 
           <div id="q-locked" class="locked">
             <span class="big">&#9883;</span>
-            量子系统未解锁
+            <span id="q-locked-title">量子系统未解锁</span>
             <div class="cond">
               <div>需要基础物质达到 <b id="q-need">1e25</b></div>
               <div style="margin-top:6px">真空零点能每达到一个门槛，就捕获一对<b>量子</b></div>
+            </div>
+            <!-- ★★ 2025：**已解锁过**（第一次永恒之后）的说明 ——
+                 页面不再上锁，只是本轮还没推进到门槛。由 renderQuantum 控制显隐。
+                 没有这一段的话，玩家会看到"未解锁"而以为自己丢了进度 ✗ -->
+            <div class="cond" id="q-perma-hint" hidden style="margin-top:8px">
+              <div><b>已解锁过</b>：本轮重新攒到 <b>1e25</b> 基础物质即可继续使用（进度不丢）</div>
             </div>
           </div>
 
@@ -328,10 +506,36 @@
               <div><span>熵产出倍率</span><b id="quantum-mult" class="glow-dm">×1.00</b></div>
               <div><span>暗能量获取加成</span><b id="quantum-degain" class="glow-red">×1.00</b></div>
               <div><span>暗能量倍率</span><b id="quantum-demult" class="glow-accent">×1.00</b></div>
-              <div><span>成长速率</span><b id="quantum-grow" class="glow-accent">0.000 阶/秒</b></div>
+              <div><span>ZPE 倍率加成</span><b id="quantum-zpemult" class="glow-accent">+0</b></div>
+              <div><span>粒子增幅速率 b</span><b id="quantum-grow" class="glow-accent">0.000 阶/秒</b></div>
             </div>
+
+            <!-- ★ 跨度层（2025 用户方案）：k 由量子给，把暗能量撬到 inf。
+                 这两行是**派生数值**（不是可购买的加成条目）⇒ 刻意不上乘区色，
+                 落点（物质）已由「物质」乘区里的条目承担。 -->
+            <h2 style="margin-top:16px">跨度层 <span class="badge" id="span-badge">未开启</span></h2>
+            <div class="detail">
+              <div><span>跨度幂 k</span><b id="span-k">1.000</b></div>
+              <div><span>跨度乘数（物质产出）</span><b id="span-mult">×1.00</b></div>
+              <div><span>暗能量基准</span><b id="span-base">—</b></div>
+            </div>
+            <p class="rule">
+              k = min(1 + 0.5165·<b>√量子个数</b>, <b>6.1651</b>)｜物质产出 ×(暗能量 / 基准)^k
+            </p>
             <p class="note">
-              每捕获一对，上面四项各涨一次。量子在大坍缩时清零（累计对数保留）。
+              开关 = 无限升级「<b>门槛压平</b>」（需先打破无限）；购买瞬间记下当时的暗能量水位作为基准，
+              所以开启那一刻乘数恰好为 1。暗能量到 <b>1e50</b> 时 k 封顶把它放大到 <b>1e308</b>。
+            </p>
+            <p class="note">
+              每捕获一对，上面五项各涨一次。量子在大坍缩时清零（累计对数保留）。
+            </p>
+            <p class="note">
+              <b>粒子增幅速率 b</b>：粒子获得量按 <b>10^(b·本轮时间)</b> 放大（b 越高，物质爬升越快）。
+              它由量子（个数开根）、量子里程碑、档位加速与 ∞ 层「速率解放」共同决定 —— 上限走<b>阈值软上限</b>。
+            </p>
+            <p class="note">
+              <b>ZPE 倍率加成</b>：量子还直接给 ZPE 倍率一个加法区的项 <b>+q³/10</b>
+              （q = 量子个数；这是 ZPE 引擎设计稿第 3 条）。
             </p>
           </div>
         </div>
@@ -341,8 +545,12 @@
 
           <div id="inf-locked" class="locked">
             <span class="big">&#8734;</span>
-            无限系统未解锁
+            <span id="inf-locked-title">无限系统未解锁</span>
             <div class="cond">需要基础物质达到 <b id="inf-need">1e308.2547</b></div>
+            <!-- ★★ 2025：**已解锁过**（第一次永恒之后）的说明；由 renderInfinity 控制显隐 -->
+            <div class="cond" id="inf-perma-hint" hidden style="margin-top:8px">
+              <div><b>已解锁过</b>：本轮重新推进到物质硬顶即可继续（进度不丢）</div>
+            </div>
           </div>
 
           <div id="inf-content" hidden>
@@ -358,7 +566,7 @@
               <div><span>本次收益</span><b id="bigcrunch-gain" class="glow-gold">1</b></div>
             </div>
 
-            <button class="btn zone zone-dm" id="btn-bigcrunch" disabled>
+            <button class="btn" id="btn-bigcrunch" disabled>
               <div class="btn-row">
                 <span class="btn-name">大坍缩</span>
                 <span class="btn-lv" id="bigcrunch-status">未打破无限</span>
@@ -374,67 +582,36 @@
               <div class="btn-desc">解除物质上限 → 大坍缩改<b>手动</b>，收益随深度增长</div>
             </button>
 
-            <h2 style="margin-top:18px">无限升级 <span class="badge" id="inf-upgrade-count">0 / 16</span></h2>
+            <h2>无限升级 <span class="badge" id="inf-upgrade-count">0 / 16</span></h2>
             <div class="detail" style="margin-bottom:10px">
               <div><span>无限点产出</span><b id="inf-income" class="glow-gold">0</b></div>
               <div><span>本轮历时</span><b id="inf-elapsed">0s</b></div>
             </div>
+            <!-- ★★ 2025：**① 无限增幅置顶，独立占一行**（用户要求）——
+                 形态与「升级中心」里的可重复升级一致：主按钮 + 「买满」按钮。
+                 ⚠️ 外壳写在这里（**静态**），这样 `ui.js` 的 `cache()` 能找到这些 id；
+                    文案与状态由 `buildInfinityUpgrades()` / `render()` 填（与升级中心同一套路 ✓）。
+                 它不再出现在下面的 `.inf-grid` 里。 -->
+            <div class="btn-main" id="inf-ipdouble-row" style="margin-bottom:8px">
+              <button class="btn" id="inf-btn-ipDouble">
+                <div class="btn-row">
+                  <span class="btn-name">无限增幅</span>
+                  <span class="btn-lv" id="inf-ipDouble-state">Lv 0</span>
+                </div>
+                <div class="btn-desc" id="inf-ipDouble-desc">无限点收益 ×2/级（最终乘区：乘在所有来源之后）</div>
+                <div class="btn-cost" id="inf-ipDouble-cost">—</div>
+              </button>
+              <button class="btn-max" id="btn-max-ipDouble" title="一次买满（闭式解）">
+                <span class="n" id="max-ipDouble-n">0</span>买满
+              </button>
+            </div>
+
             <div class="inf-grid" id="inf-upgrade-list"></div>
             <p class="note">
               无限点来自两条路：<b>深度收益</b>（越深越多）与<b>耗时收益</b>（「无限长河」，与深度无关）。
               所有一次性升级买了就永久保留。
             </p>
 
-            <!-- ★ 无限铸币（设计未冻结 —— 用户保留最终修改权） -->
-            <h2 style="margin-top:18px">无限铸币 <span class="badge" id="coinage-badge">0 / 0</span></h2>
-            <div class="detail" style="margin-bottom:10px">
-              <div><span>铸币等级</span><b id="coinage-level">0 / 0</b></div>
-              <div><span>收入倍率</span><b id="coinage-mult" class="glow-gold">×1.00</b></div>
-              <div><span>档位</span><b id="coinage-tier">0</b></div>
-            </div>
-            <div class="btn-main">
-              <button class="btn zone zone-ip" id="btn-buy-coinage">
-                <div class="btn-row">
-                  <span class="btn-name">铸币</span>
-                  <span class="btn-lv" id="coinage-afford">可买 0 级</span>
-                </div>
-                <div class="btn-desc" id="coinage-desc">所有无限点收入 ×2.5/级</div>
-                <div class="btn-cost" id="coinage-cost">花费 — 无限点</div>
-              </button>
-              <button class="btn-max" id="btn-buy-coinage-max" title="连续购买直到买不起或触到本档上限">买满</button>
-            </div>
-            <p class="rule">
-              大坍缩 → 放行 <b id="coinage-cap-per-crunch">30</b> 级｜第 900 级起涨价 ×20
-            </p>
-
-            <h2 style="margin-top:14px">坍缩里程碑 <span class="badge" id="tier-ms-badge">0 / 7</span></h2>
-            <div class="ms-list" id="tier-milestone-list"></div>
-            <p class="note">
-              挂在<b>大坍缩次数</b>上：每次大坍缩 → 放行一批铸币上限；里程碑再逐步抬高"每档放行量"
-              （= <b>档数压缩</b>：24 档 → 约 18 档）。
-            </p>
-
-            <!-- ★ 坍缩加速器：直接买时间（一次大坍缩的耗时与成长速率严格成反比） -->
-            <h2 style="margin-top:18px">坍缩加速 <span class="badge" id="accel-badge">0 / 36</span></h2>
-            <div class="detail" style="margin-bottom:10px">
-              <div><span>等级</span><b id="accel-level">0</b></div>
-              <div><span>成长速率</span><b id="accel-mult" class="glow-accent">×1.00</b></div>
-              <div><span>坍缩耗时</span><b id="accel-time" class="glow-green">×1.00</b></div>
-            </div>
-            <div class="btn-main">
-              <button class="btn zone zone-cost" id="btn-buy-accel">
-                <div class="btn-row">
-                  <span class="btn-name">坍缩加速</span>
-                  <span class="btn-lv" id="accel-afford">可买 0 级</span>
-                </div>
-                <div class="btn-desc" id="accel-desc">成长速率 ×1.02/级（每次大坍缩快 2%）</div>
-                <div class="btn-cost" id="accel-cost">花费 — 无限点</div>
-              </button>
-              <button class="btn-max" id="btn-buy-accel-max" title="连续购买直到买不起或封顶">买满</button>
-            </div>
-            <p class="rule">
-              增速封顶 <b>×2</b>｜18 小时档 ≈ <b>15 级</b>
-            </p>
 
             <h2 style="margin-top:18px">坍缩重置</h2>
             <div class="detail">
@@ -448,15 +625,42 @@
           </div>
         </div>
 
+        <!-- ══ 面板：无限 · 坍缩里程碑 + 无限挑战（无限的第二个子页 —— 悬停「无限」浮出）══
+             ★★ 2025：无限挑战（IC）**从 ZPE 引擎面板挪到这里**（用户指定，只挪位置、不动机制）：
+                    稿子原文「无限挑战…作为无限页面的子页面存在」。
+                    容器 `ic-host` 由 src/ui-ic.js 的 buildIcUI() 填充。
+             另：坍缩加速整块已删除（用户裁定）；铸币块更早之前已删。 -->
+        <div class="tab-panel" id="panel-infdeep" hidden>
+          <p class="rule">
+            ∞ 层的<b>深层系统</b>：坍缩里程碑（按大坍缩次数逐条解锁）· 无限挑战（IC）
+          </p>
+
+          <h2 style="margin-top:14px">坍缩里程碑 <span class="badge" id="tier-ms-badge">0 / 7</span></h2>
+          <div class="ms-list" id="tier-milestone-list"></div>
+          <p class="note">
+            八条里程碑挂在「大坍缩次数」上，逐条解锁、永久生效（不随大坍缩清零）——
+            内容来自用户的第三层设计稿（详见 config.js 的 `COLLAPSE_MILESTONES`）。
+          </p>
+
+          <!-- ★ 无限挑战（IC）的宿主：ui-ic.js 往这里追加 -->
+          <div id="ic-host"></div>
+        </div>
+
         <!-- ══ 面板：永恒（★ 先占位：只保留标签页与解锁条件，内容等设计定了再填）══ -->
         <div class="tab-panel" id="panel-eternity" hidden>
 
           <div id="eternity-locked" class="locked">
             <span class="big">&#8734;&#8734;</span>
-            永恒未解锁
+            <span id="eternity-locked-title">永恒未解锁</span>
             <div class="cond">
               <div>需要无限点达到 <b id="eternity-need">1e308.25</b></div>
               <div style="margin-top:6px">当前 <b id="eternity-have">0</b></div>
+            </div>
+            <!-- ★★ 2025：**已解锁过**（第一次永恒之后）的说明 ——
+                 永恒页不再上锁，只是本轮 IP 还没攒回门槛。由 render 控制显隐。
+                 （用户实测反馈：「我的永恒页面也被重置了」） -->
+            <div class="cond" id="eternity-perma-hint" hidden style="margin-top:8px">
+              <div><b>已解锁过</b>：本轮重新攒到门槛即可再永恒（永恒点与进度不丢）</div>
             </div>
           </div>
 
@@ -469,10 +673,66 @@
               <div><span>本次收益</span><b id="eternity-gain" class="glow-etern">0</b></div>
               <div><span>已永恒</span><b id="eternity-count">0</b></div>
             </div>
+                        <div class="btn-main">
+              <button class="btn zone" id="btn-eternity" style="--zone:var(--eternity)" disabled>
+                <div class="btn-row">
+                  <span class="btn-name">永恒</span>
+                  <span class="btn-lv" id="eternity-status">需要 1e280 无限点</span>
+                </div>
+                <div class="btn-desc">重置 ∞ 层及以下 → 获得永恒点（公式同 AD）</div>
+              </button>
+            </div>
+
+            <h2 style="margin-top:18px">永恒重置</h2>
+            <div class="detail">
+              <div><span>物质 / 粒子 / 熵 / 熵阱</span><b>归零</b></div>
+              <div><span>三条主升级 / ZPE / 暗能量 / 量子</span><b>归零</b></div>
+              <div><span>无限点 / 全部 ∞ 升级 / 档位</span><b>归零</b></div>
+              <div><span>虚空升级 / ZPE / 暗能量里程碑</span><b>归零</b></div>
+              <div><span>梦想点 / 梦想升级 / 成就</span><b class="rainbow">保留</b></div>
+              <div><span>永恒点 / 永恒次数</span><b class="glow-etern">保留</b></div>
+              <div><span>日志与统计</span><b>保留</b></div>
+            </div>
+            <!-- ★ 2025 修：这里原来是**孤立的 `</p>`**（第 555 行），
+                 没有对应的开标签 ⇒ 浏览器会把它当成一个空段落丢在正文里。
+                 已并进上一段（与之前 v9 那次同一类结构 bug ✗） -->
             <p class="note">
-              永恒点公式与 AD 相同：<b>5<sup>(log10(无限点)/308 − 0.7)</sup></b>（门槛处正好给 1 点）。
+              <b>奖励暂为占位</b>（暗物质要换新机制）：所以第二次永恒目前不会更快，
+              这只是把"层间重置 + 永恒点累积"的骨架先立起来。
               永恒后解锁<b>暗物质</b>，并接进<b>全局加成</b>。
             </p>
+
+            <!-- ══════════ 永恒升级（设计稿 33~35 行）══════════ -->
+            <!-- ★★★ 2025 新实现：「将最终获得的永恒点 *5（价格初始 1ep，每次购买后 *5）」
+                 ⚠️ 数值与按钮文案都由 ui.js 的 renderEternity 从公式推导，**不在这里写死** ✗
+                 （本项目"显示 ≠ 实发"的头号成因就是同一个数写两遍）-->
+            <h2 style="margin-top:18px">永恒升级</h2>
+            <div class="stack">
+              <div class="btn-row">
+                <button class="btn" id="btn-eternity-upg-epMult">
+                  <span class="btn-name">永恒增幅</span>
+                  <span class="btn-lv" id="eternity-upg-epMult-lv">Lv 0</span>
+                  <div class="btn-desc" id="eternity-upg-epMult-desc">最终获得的永恒点 ×1</div>
+                  <div class="btn-cost" id="eternity-upg-epMult-cost">花费 1 永恒点</div>
+                </button>
+                <button class="btn-max" id="btn-max-eternity-upg-epMult" title="一次买满（闭式解）">
+                  <span class="n" id="max-eternity-upg-epMult-n">0</span>买满
+                </button>
+              </div>
+            </div>
+            <p class="note">
+              价格 <b>1 → 5 → 25 → 125 …</b>（每买一次 ×5），效果 <b>5^等级</b> 乘在
+              <b>最终获得的永恒点</b>上。永恒升级<b>不随永恒重置</b>。
+            </p>
+
+            <!-- ══════════ 永恒里程碑（设计稿 36~44 行）══════════ -->
+            <h2 style="margin-top:18px">永恒里程碑 <span class="badge" id="eternity-ms-badge">0 / 8</span></h2>
+            <div class="ms-list" id="eternity-milestone-list"></div>
+            <p class="note">
+              按<b>永恒次数</b>逐条解锁（第 N 次永恒 ⇒ 前 N 条一起生效），**永不重置**。
+              标着「待实装」的条目已经登记、但机制本体还没做（原因见条目内说明）。
+            </p>
+
             <p class="note">
               本层<b>没有</b>「到 1e308.25 强制坍缩」那种硬顶机制 —— 与物质层不同，永恒是**手动**触发的。
             </p>
@@ -480,6 +740,13 @@
         </div>
 
       </div>
+    </div>
+
+    <!-- ─────────── 右列：标签页 ─────────── -->
+    <div class="col">
+
+      
+    
     </div>
   </div>
 </div>

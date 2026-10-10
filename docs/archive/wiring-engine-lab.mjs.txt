@@ -1,0 +1,249 @@
+/**
+ * tools/wiring-engine-lab.mjs —— 「接线」机制**引擎钩子与 UI** 的定点断言
+ *
+ * 为什么单独一个文件：`wiring-lab.mjs` 测的是**数学核心**（src/wiring.js 的纯函数 ✓）；
+ *   本文件测的是**接线之后的行为**（清单 §5 里"引擎/UI"那几条 ✓）。
+ *   分成两个文件是为了让"数学"与"接线"两类失败一眼可分 ✓。
+ *
+ * 用法：node tools/wiring-engine-lab.mjs [--check]
+ */
+import fs from "node:fs";
+import Decimal from "../dist/break_eternity.esm.js";
+import { newState } from "../src/state.js";
+import { breakInfinity, tick } from "../src/engine.js";
+import { zpeRate } from "../src/formulas.js";
+import {
+  WIRING, edgeCost, edgesOf, eternityBand, eternityGate, eternityPointsGain, eternityPrecision, epDivisor, freeUsedOf, globalRingS, networkMultiplier, paidEdgeCount, previewEdge,
+  tickWiring, tryBuyEdge, tryRemoveEdgeWithRefund, wiringActive,
+} from "../src/wiring.js";
+
+const D = (v) => new Decimal(v ?? 0);
+const pad = (s, n) => String(s).padEnd(n);
+const check = process.argv.includes("--check");
+
+/** 造一个"已打破无限、可接线"的状态 ✓ */
+function brokenState() {
+  const s = newState();
+  s.bigCrunchCount = D(1);
+  s.infinityPoints = D(1000);
+  breakInfinity(s);
+  return s;
+}
+
+console.log("=".repeat(104));
+console.log("接线机制：引擎钩子与 UI 的行为");
+console.log("=".repeat(104));
+
+if (check) {
+  console.log("=".repeat(104));
+  console.log("定点断言");
+  console.log("=".repeat(104));
+  let fails = 0;
+  const ck = (label, ok, detail) => {
+    if (!ok) fails++;
+    console.log(`  ${ok ? "✅" : "❌"} ${pad(label, 48)} ${detail}`);
+  };
+
+  // ── ① 解锁钩子（engine.js：破∞时 unlockWiring ✓）──
+  {
+    const before = newState();
+    ck("① 未破∞时机制未开启", !wiringActive(before), `unlocked = ${!!before.wiring?.unlocked}`);
+    const s = brokenState();
+    ck("① 破∞后自动开启（engine 钩子 ✓）", wiringActive(s) && s.wiring.edges.length === 0,
+      `unlocked = ${s.wiring.unlocked}，边数 = ${s.wiring.edges.length}`);
+  }
+
+  // ── ② M 的落点：只乘进 zpeRate；空图必须**零回归**（清单 §5 第 1~2 条 ✓）──
+  {
+    const off = newState();
+    const on = brokenState();
+    const r1 = zpeRate(off).toNumber();
+    const r2 = zpeRate(on).toNumber();
+    ck("② 空图零回归：zpeRate 与未开启时**逐位相等**", r1 === r2, `${r1.toExponential(6)} vs ${r2.toExponential(6)}`);
+
+    const s = brokenState();
+    // 给两条边（用免费额度 ✓）⇒ M > 1 ⇒ zpeRate 应被乘上 M
+    tryBuyEdge(s, WIRING.tutorial[0].from, WIRING.tutorial[0].to, 0);
+    tryBuyEdge(s, WIRING.tutorial[1].from, WIRING.tutorial[1].to, 0);
+    const bs = brokenState(); bs.zpe = D(1e30); bs.resources.traps = D(10);
+    s.zpe = D(1e30); s.resources.traps = D(10);
+    const base = zpeRate(bs).toNumber();
+    const mult = networkMultiplier(s);
+    const got = zpeRate(s).toNumber();
+    const ratio = got / base;
+    ck("② M 真的乘进了 zpeRate（唯一落点 ✓）", Math.abs(ratio - mult) / mult < 1e-9,
+      `zpeRate 比值 ${ratio.toFixed(9)} vs M ${mult.toFixed(9)}（相对误差 ${(Math.abs(ratio - mult) / mult * 100).toExponential(2)}%）`);
+  }
+
+  // ── ③ 买边 / 拆线的经济（清单 §5 第 14~15 条 ✓）──
+  {
+    const s = brokenState();
+    s.resources.matter = D(1e30);
+    const m0 = D(s.resources.matter).toNumber();
+    const a = tryBuyEdge(s, WIRING.tutorial[0].from, WIRING.tutorial[0].to, 1e20);
+    const b = tryBuyEdge(s, WIRING.tutorial[1].from, WIRING.tutorial[1].to, 1e20);
+    ck("③ 前两条 = 免费额度（不扣物质）", a.free === true && b.free === true && D(s.resources.matter).toNumber() === m0,
+      `物质 ${m0.toExponential(2)} → ${D(s.resources.matter).toNumber().toExponential(2)}；freeUsed = ${freeUsedOf(s)}`);
+    ck("③ 免费边**不计入**成本曲线计数", paidEdgeCount(s) === 0, `付费边数 = ${paidEdgeCount(s)}`);
+
+    const price = WIRING.costSeconds * Math.pow(1, WIRING.costGamma) * 1e20;
+    const c = tryBuyEdge(s, "entropy", "zpe", 1e20);
+    const paid = m0 - D(s.resources.matter).toNumber();
+    ck("③ 第 3 条不是免费边（进入付费路径 ✓）", c.ok === true && c.free === false,
+      `ok=${c.ok} free=${c.free} reason=${c.reason ?? "-"}`);
+    ck("③ 第 3 条扣物质 = 当前产出 × 85 秒", Math.abs(paid - price) / price < 1e-6,
+      `扣了 ${paid.toPrecision(17)}（应 ${price.toPrecision(17)}）相对差 ${(Math.abs(paid - price) / price).toExponential(2)}`);
+
+    const before = D(s.resources.matter).toNumber();
+    const r = tryRemoveEdgeWithRefund(s, 2, 1e20);
+    const refunded = D(s.resources.matter).toNumber() - before;
+    ck("③ 拆线返还 50%", Math.abs(refunded - price * WIRING.refund) / (price * WIRING.refund) < 1e-6,
+      `返还 ${refunded.toPrecision(17)}（应 ${(price * WIRING.refund).toPrecision(17)}）相对差 ${(Math.abs(refunded - price * WIRING.refund) / (price * WIRING.refund)).toExponential(2)}`);
+
+    // 拆免费边 ⇒ 退回免费额度 ✓
+    const s2 = brokenState();
+    s2.resources.matter = D(1e30);
+    tryBuyEdge(s2, WIRING.tutorial[0].from, WIRING.tutorial[0].to, 1e20);
+    tryRemoveEdgeWithRefund(s2, 0, 1e20);
+    ck("③ 拆免费边会退回免费额度（可再免费接 2 条）", freeUsedOf(s2) === 0, `freeUsed = ${freeUsedOf(s2)}`);
+  }
+
+  // ── ④ 采样与崩落（engine 钩子 tickWiring ✓）──
+  {
+    const s = brokenState();
+    s.resources.matter = D(1e30);
+    // 接满到越线（每条边 S_w += sPerEdge ⇒ 上限 ≈ 1/sPerEdge 条 ✓）
+    const n = Math.ceil(1 / WIRING.sPerEdge) + 2;
+    for (let i = 0; i < n; i++) {
+      s.wiring.edges.push({ from: "matter", to: i % 2 ? "particle" : "quantum", weight: WIRING.edgeWeight });
+    }
+    const g = globalRingS(s);
+    ck("④ 接够边后全局环增益越线（S_global ≥ 1）", g >= 1, `S_global = ${g.toFixed(4)}（${n} 条边）`);
+
+    s.wiring.now = 1000;
+    const r1 = tickWiring(s, 1000);
+    ck("④ 越线 ⇒ 崩落：边清空 + 记冷却 + 采样清空",
+      r1.crashed === true && edgesOf(s).length === 0 && s.wiring.crashedAt === 1000 && (s.sWindow ?? []).length === 0,
+      `crashed = ${r1.crashed}，边数 = ${edgesOf(s).length}，crashedAt = ${s.wiring.crashedAt}`);
+
+    const r2 = tickWiring(s, 1010);   // 冷却期内
+    ck("④ 冷却期内不再重复崩落", r2.crashed === false, `10 秒后再判 ⇒ crashed = ${r2.crashed}`);
+
+    // 采样窗口：正常状态下每 tick 会塞一个采样 ✓
+    const s3 = brokenState();
+    for (let t = 0; t < 10; t++) tickWiring(s3, t * 2);
+    ck("④ 每 tick 采样一次 S（波动窗口有数据 ✓）", (s3.sWindow ?? []).length > 0, `采样数 = ${(s3.sWindow ?? []).length}`);
+  }
+
+  // ── ⑤ tick 主循环里的钩子真的挂上了（engine.js ✓）──
+  {
+    const s = brokenState();
+    const before = (s.wiring.now ?? 0);
+    tick(s, 1);
+    tick(s, 1);
+    tick(s, 1);
+    ck("⑤ tick 会推进 wiring 的本地时钟（钩子生效 ✓）", (s.wiring.now ?? 0) > before,
+      `now ${before} → ${s.wiring.now}`);
+    ck("⑤ 每约 2 秒采样一次（3 秒 ⇒ ≥1 个采样）", (s.sWindow ?? []).length >= 1, `采样数 = ${(s.sWindow ?? []).length}`);
+  }
+
+  // ── ⑤b 教学脚本机（规格 10.3）：免费边只能按预订顺序接，接完才推进 step ──
+  {
+    const s = brokenState();
+    s.resources.matter = D(1e30);
+    const t0 = s.wiring.tutorialStep ?? 0;
+    const r1 = tryBuyEdge(s, WIRING.tutorial[0].from, WIRING.tutorial[0].to, 1e20);
+    ck("5b 教学第 1 条：按预订端点接上后 step 推进",
+      r1.ok === true && r1.free === true && (s.wiring.tutorialStep ?? 0) === t0 + 1,
+      `free=${r1.free} step=${s.wiring.tutorialStep}`);
+    const r2 = tryBuyEdge(s, WIRING.tutorial[1].from, WIRING.tutorial[1].to, 1e20);
+    ck("5b 教学第 2 条：接上后 step = 2（教学结束）",
+      r2.ok === true && r2.free === true && (s.wiring.tutorialStep ?? 0) === 2,
+      `free=${r2.free} step=${s.wiring.tutorialStep}`);
+    const s3 = brokenState();
+    s3.resources.matter = D(1e30);
+    const off = tryBuyEdge(s3, "entropy", "zpe", 1e20);
+    ck("5b 教学期接**非预订**端点 ⇒ 不给免费（走付费路径）", off.free !== true,
+      `free=${off.free} ok=${off.ok}（付费 or 物质不足都算对）`);
+  }
+
+  // ── ⑤c Decimal-first：物质产出大到 1e400 时，价格/预演**不许**变成 Infinity ──
+  {
+    const s = brokenState();
+    s.resources.matter = D("1e900");
+    const mps = D("1e400");                    // 远超 Number.MAX_VALUE ⇒ 若走 toNumber 必然 Infinity
+    const price = edgeCost(s, mps);
+    ck("5c 超大产出下，边价仍是**有限** Decimal（不是 ∞）", !price.eq(Decimal.dInf) && price.gt(0),
+      `edgeCost = ${price.toExponential(3)}（是否 dInf = ${price.eq(Decimal.dInf)}）`);
+    const p = previewEdge(s, "entropy", "zpe", mps);
+    ck("5c 超大产出下，预演结果有限（回本时间可为 Infinity 但收益必须有限）",
+      Number.isFinite(p.dM) && Number.isFinite(p.M) && p.ok === true,
+      `ok=${p.ok} dM=${p.dM.toFixed(4)} M=${p.M.toFixed(4)} payback=${p.paybackSec}`);
+    const r = tryBuyEdge(s, "entropy", "zpe", mps);
+    ck("5c 超大产出下，买边能成功且扣款有限", r.ok === true && !D(s.resources.matter).eq(Decimal.dInf),
+      `ok=${r.ok} 剩余物质 ${D(s.resources.matter).toExponential(3)}`);
+    const before = D(s.resources.matter);
+    const rr = tryRemoveEdgeWithRefund(s, s.wiring.edges.length - 1, mps);
+    ck("5c 超大产出下，返还是有限 Decimal", !D(rr.refundAmount).eq(Decimal.dInf) && D(rr.refundAmount).gt(0),
+      `refund = ${D(rr.refundAmount).toExponential(3)}`);
+  }
+
+  // ── ⑤d 第二步 (c)：递进式精度门槛 + AD 公式（除数走钩子）──
+  {
+    // 区间递进：lo 递增、hi 逼近 1、宽度单调收窄
+    const bands = [0, 1, 2, 3, 5].map(eternityBand);
+    ck("5d 精度区间递进：lo 递增 / hi 逼近 1 / 宽度单调收窄",
+      bands.every((b, i) => i === 0 || (b.lo > bands[i - 1].lo && b.hi > bands[i - 1].hi && (b.hi - b.lo) < (bands[i - 1].hi - bands[i - 1].lo))),
+      `k=0 [${bands[0].lo}, ${bands[0].hi}] … k=5 [${bands[4].lo.toFixed(4)}, ${bands[4].hi.toFixed(6)}]`);
+
+    // 门槛四条：空网不通过；接出环 + 覆盖 3 乘区后通过
+    const s = brokenState(); s.wiring.tutorialStep = 2; s.wiring.freeUsed = 0;
+    const g0 = eternityGate(s);
+    ck("5d 空网：门槛不通过（结构三条未满足）", g0.ok === false && g0.checks.filter((c) => !c.ok).length === 3,
+      `未满足 ${g0.checks.filter((c) => !c.ok).length} 条`);
+    s.wiring.edges = [
+      { from: "matter", to: "particle", weight: 0.35 },
+      { from: "particle", to: "matter", weight: 0.35 },
+      { from: "entropy", to: "zpe", weight: 0.35 },
+    ];
+    const g1 = eternityGate(s);
+    ck("5d 有环 + 覆盖 3 乘区 ⇒ 四条全满足（门槛通过）", g1.ok === true && g1.checks.every((c) => c.ok),
+      `4/4 通过（S = ${g1.precision.S.toFixed(4)}，t = ${g1.precision.t.toFixed(3)}）`);
+
+    // 除数钩子：必须是**函数**（用户未来的"裂缝"类升级要改写它）
+    ck("5d 除数走钩子（epDivisor 是函数，不是内联常量）",
+      typeof epDivisor === "function" && Math.abs(epDivisor(s) - 308.25471555991675) < 1e-9,
+      `epDivisor = ${epDivisor(s)}`);
+
+    // EP 随精度单调：同一 IP、精度更高 ⇒ EP 更高
+    const a = brokenState(); a.wiring.tutorialStep = 2; a.wiring.freeUsed = 0; a.infinityPoints = D("1e3000");   // large IP so floor() cannot hide the precision gap
+    const b = brokenState(); b.wiring.tutorialStep = 2; b.wiring.freeUsed = 0; b.infinityPoints = D("1e3000");
+    for (let i = 0; i < 10; i++) b.wiring.edges.push({ from: "matter", to: i % 2 ? "particle" : "quantum", weight: 0.35 });
+    const pa = eternityPrecision(a), pb = eternityPrecision(b);
+    const ea = eternityPointsGain(a), eb = eternityPointsGain(b);
+    ck("5d EP 随精度单调上升（同 IP，t 更大 ⇒ EP 更高）",
+      pa.inside && pb.inside && pb.t > pa.t && eb.gt(ea),
+      `t ${pa.t.toFixed(3)} → ${pb.t.toFixed(3)}｜EP ${ea.toExponential(3)} → ${eb.toExponential(3)}（×${eb.div(ea).toNumber().toFixed(3)}）`);
+    ck("5d 精度上限 = precisionMax（贴住上限时 EP ×该倍率）",
+      WIRING.precisionMax === 10 && Math.abs((1 + 1 * (WIRING.precisionMax - 1)) - 10) < 1e-9, `precisionMax = ${WIRING.precisionMax}`);
+  }
+
+  // ── ⑥ UI：源码级守卫（动态 DOM 不在 dom-smoke 的扫描范围内 ✗ ⇒ 在这里补 ✓）──
+  {
+    const src = fs.readFileSync(new URL("../src/ui-wiring.js", import.meta.url), "utf8");
+    const bad = src.match(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u);
+    ck("⑥ UI 源码里**没有 emoji**（AMOLED 守卫 ✓）", !bad, bad ? `发现 ${bad[0]}` : "无 ✓");
+    const ui = fs.readFileSync(new URL("../src/ui.js", import.meta.url), "utf8");
+    ck("⑥ ui.js 真的引用了接线面板（render 里调用 ✓）",
+      /from "\.\/ui-wiring\.js"/.test(ui) && /renderWiring\(state\)/.test(ui), "import + renderWiring ✓");
+    ck("⑥ 面板用现有 AMOLED 语言（h2 / badge / detail / stack / bar ✓）",
+      /class="badge"/.test(src) && /class="detail"/.test(src) && /class="stack"/.test(src) && /class="bar"/.test(src),
+      "四类既有 class 全用到 ✓");
+  }
+
+  console.log();
+  console.log(`  ${fails === 0 ? "全部通过 ✅" : `${fails} 项失败 ❌`}`);
+  process.exit(fails ? 1 : 0);
+} else {
+  console.log("（加 --check 跑断言 ✓）");
+}

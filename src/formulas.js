@@ -1,3 +1,4 @@
+import { quantumToIPGain } from "./config.js";
 /**
  * formulas.js —— 全部计算（纯函数，不碰 DOM）
  *
@@ -10,14 +11,20 @@
  */
 
 import Decimal from "../dist/break_eternity.esm.js";
-import {
+import { hasCollapse, transmuterIpMult,
   BASE, BREAK_INFINITY, CLIMB, COLLAPSE, DE_MILESTONES, DE_PENALTY, DE_UPGRADES, INFINITY_UPGRADES, OVERLOAD,
   REPEATABLE, piecewiseDeCost, overloadThreshold, infinityRateMult,
-  VOID_UPGRADES, ZPE_EXPONENT, ZPE_MILESTONES, crunchThreshold,
+  VOID_UPGRADES, ZPE_EXPONENT, ZPE_MILESTONES, QUANTUM_MILESTONES, DE_SPAN, crunchThreshold,
   infinityPointGain, quantumDeGainBonus, quantumDeMultBonus,
-  quantumEntropyMultiplier, quantumGrowthRate, dreamUpgradeEffects,
-  zpeEngineCountFreqUnlocked, zpeEngineExpBonus, zpeEngineProdMult, coinageMult, quantumToIPGain, unspentBoostMult,
-} from "./config.js";
+  quantumEntropyMultiplier, dreamUpgradeEffects,
+  zpeEngineCountFreqUnlocked, zpeEngineProdMult, voidBoostMult, icEntropyMult, ipDoubleMult, zpeEngineAddBonus, zpeEngineMultBonus,
+  matterSpanMult, softCapB, qOf, quantumZpeMultBonus, ETERNITY, eternityPointGain, tierMilestonesDone, tierAccelMult, matterTotalExponent, CRUNCH_AT_LABEL,
+  // ★ 2025：永恒里程碑（em6 = 熵消耗 ÷1.2；em5 = IP 收益 ×(1+log10 累计EP)）
+  hasEternityMilestone, em5IpMult,
+  // ★★★ 2025（用户裁定）：引擎等级对【量子加成】的乘数（= costGrowth^等级，与价格同速）
+  engineBonusMult,
+  // ★★★ 2025（`docs/NEKO.md` §7）：好感度 ⇒ 全局加成 ^指数（唯一入口）
+  nekoGlobalExponent } from "./config.js";
 import { deLevelOf, hasDe, hasV9, hasVoid, hasZpe, levelOf } from "./state.js";
 
 const D = (v) => new Decimal(v ?? 0);
@@ -104,6 +111,8 @@ export function countFreqAddTerm(state) {
     if (cfg.kind !== "countFreqAdd") continue;
     extra = extra.add(levelOf(state, cfg.id).mul(cfg.effectPerLevel ?? 0.05));
   }
+  // ★ cm2：计数频率每级系数翻倍（0.05 -> 0.10）⇒ 把"超出 1 的部分" ×2
+  if (hasCollapse(state, "cm2")) extra = D(1).add(extra.sub(1).mul(2));
   return extra;
 }
 
@@ -122,9 +131,16 @@ export function countFreqAddTerm(state) {
 export function globalMultiplier(state) {
   const dp = state.dreamPoints;
   const base = D(1).add(dp.mul(dreamCoefficient(state)));
-  return base
+  const total = base
     .mul(countFreqAddTerm(state))
-    .mul(darkEnergyMultiplier(state))
+    .mul(darkEnergyMultiplier(state));
+  // ★★★ 2025（`docs/NEKO.md` §7 / §10）：**好感度 ⇒ 全局加成 ^指数**
+  //   · 三档（>25 / >50 / >75）叠乘 ⇒ 指数 ∈ [1, 1.0221151]
+  //   · 好感度为负 / 未达门槛 ⇒ 指数恒 1（**负面不影响游戏进程** ✓）
+  //   · 幂运算必须走 `Decimal.pow`（`Math.pow` 在 1e308 量级会 Infinity ⇒ 本项目踩过 ✓）
+  //   · 安全余量已论证（NEKO.md §7）：环增益 0.7263 → 0.7423，仍 < 1 ✓
+  const nekoExp = nekoGlobalExponent(state);
+  return nekoExp === 1 ? total : Decimal.pow(total, nekoExp);
   // ⚠️ 量子**不在这里**。
   //
   //   曾经把它放进 globalMultiplier（想让它「更全面」），但那是**最爆炸的乘区**：
@@ -139,16 +155,24 @@ export function globalMultiplier(state) {
 }
 
 /**
- * 全局加成的**三个因子**（顶部「全局加成」槽显示分解用）。
+ * 全局加成的**分解**（顶部「全局加成」槽显示用）。
  *
  * 接口放在这里而不是 ui.js：显示必须来自同一个公式（SPEC「输出函数 == 运算函数」），
  * 否则又会出现「显示 ≠ 实际」。
+ *
+ * ★ 2025：加了好感度那一层**指数** ⇒ 分解里必须带上它，否则
+ *   `dream × countFreq × de ≠ total`（三因子相乘再取幂）⇒ 显示会自相矛盾 ✗
+ *   ⇒ 返回 `nekoExp`（1 = 未生效）与 `base`（取幂**之前**的乘积），
+ *      让 UI 能显示 `base ^nekoExp` 这个**完整**表达式 ✓
  */
 export function globalMultiplierParts(state) {
   const dream = D(1).add(state.dreamPoints.mul(dreamCoefficient(state)));
   const countFreq = countFreqAddTerm(state);
   const de = darkEnergyMultiplier(state);
-  return { dream, countFreq, de, total: dream.mul(countFreq).mul(de) };
+  const base = dream.mul(countFreq).mul(de);
+  const nekoExp = nekoGlobalExponent(state);
+  const total = nekoExp === 1 ? base : Decimal.pow(base, nekoExp);
+  return { dream, countFreq, de, base, nekoExp, total };
 }
 
 // ══════════════════════════════════════════════════════════
@@ -178,15 +202,18 @@ export function canBigCrunch(state) {
  * ⚠️ 踩过的坑：`doBigCrunch` 曾经自己算 `infinityPointGain × 3^①`，**没走这个函数** ——
  *    于是"显示"与"实发"会脱节（我加铸币倍率后立刻发生：界面乘了铸币、引擎没乘）。
  *    现在引擎直接 `const ip = bigCrunchGain(state)`，并由
- *    `tools/coinage-lab.mjs` 的断言守着"显示 == 实际"。
  */
 export function bigCrunchGain(state) {
-  const ipMult = Decimal.pow(INFINITY_UPGRADES.ipDouble.effectMult, state.ipDoubleLevel ?? 0);
+  const ipMult = ipDoubleMult(state);
   // ① 的加成（3^等级） → 铸币倍率 → 量子铸币的额外点数
-  return infinityPointGain(state.resources.matter, state.brokenInfinity)
+  // ★★ 2025：再乘 **em5**（永恒里程碑 5：永恒点倍增无限点 —— `1 + log10(累计EP)`）。
+  //   放在**最外层**：它是"最终乘区"语义，乘在所有 IP 来源之后（与 ① 同一位置）✓
+  // ★★★ 2025（用户裁定）：**量子 → IP 的加成也吃引擎倍率**（5 条量子加成之一）
+  //   `engineBonusMult = costGrowth^引擎等级` ⇒ 买一级 ⇒ 价格 ×1.87、这条 ×1.87 ⇒ 同速 ✓
+  return infinityPointGain(state.resources.matter, state.brokenInfinity, state)
     .mul(ipMult)
-    .mul(coinageMult(state))
-    .add(quantumToIPGain(state));
+    .add(quantumToIPGain(state).mul(engineBonusMult(state)))
+    .mul(em5IpMult(state));
 }
 
 // ══════════════════════════════════════════════════════════
@@ -209,12 +236,51 @@ export function bigCrunchGain(state) {
  */
 export function zpeMultiplier(state) {
   const z = state.zpe.gt(0) ? state.zpe : D(0);
-  // ★ ZPE 引擎 ①：抬高倍率公式的**指数**（改形状，不只是改高度）。
-  //   安全线：`(ZPE_EXPONENT + 加成) × 倍率在产出里出现的次数 < 1`，见 config 的 ZPE_ENGINE。
-  const exp = ZPE_EXPONENT + zpeEngineExpBonus(state);
+  // ★ 2025：① 不再抬指数（旧的  已删除；指数恒为 ZPE_EXPONENT ✓）
+  const exp = ZPE_EXPONENT;
   let m = z.add(1).pow(exp);
+  // ① 加法区：`m += 等级 × addPerLevel`（与「零点耦合」同一写法）
+  m = m.add(zpeEngineAddBonus(state));
+  // ②b 乘算：`m ×= 2^等级`
+  m = m.mul(zpeEngineMultBonus(state));
+  // ★ 2025 设计稿修订：③ 改成**量子对 zpe 倍率的加成**（用户改）
+  //
+  //   为什么换掉原来的「暗能量倍率 ^1.03」：
+  //     它把**暗能量倍率**塞进了 zpeMultiplier，而暗能量倍率依赖暗能量总量、
+  //     暗能量又由相变仪从 ZPE 产出 ⇒ 它在**同一个 tick 里会变** ✗
+  //     ⇒ 显示（瞬时快照）与实发（整步）用了不同时刻的值 ⇒ 实测 6% 偏差（consistency 抓到 ✗）
+  //     （判别实验：关掉它 ⇒ consistency 立刻全绿 ✓；关掉 ④ ⇒ 仍红 ✗ ⇒ 元凶是它）
+  //   换成**量子**的加成后：走**加法区**（与 darkEnergyMultiplier 里 `+q²` 同一形制 ✓），
+  //     加法项的**相对**漂移极小 ⇒ 不再破坏"显示 == 实发" ✓
+  // ⚠️ **暂时关闭**（2025）：`量子 → zpe 倍率` 这条一旦接上，`consistency` 会报
+  //    物质 41% 偏差 ✗ —— 根因不是这条设计本身，而是**引擎取值时机**：
+  //    `advance` 按 5 秒切 chunk，每 chunk 重算因子；量子是**阈值跳变**量
+  //    ⇒ 后段 chunk 用的是跳变后的 q、而界面显示的是起始 q ⇒ 分叉 ✗
+  //    ⇒ 修法是「步首快照」（把因子**传进** tick，而不是覆盖 state ✗），
+  //      那需要一个专门的小重构 ⇒ 落成前这一行保持关闭 ✓
+  // ⚠️ **关闭**（2025）—— 我试了三种修法（跨 chunk 快照 / 步末结算 / 步首结算），**三种都失败** ✗✗✗
+  //   实测（`consistency.mjs` 物质那条）：
+  //     未接线        ⇒ 全绿 ✓
+  //     + 跨 chunk 快照 ⇒ 仍红（该测试**直接调 tick**，不走 advance ⇒ 快照用不上 ✗）
+  //     + 步末结算     ⇒ 仍红 97.8%（捕获落在被测量的那一步里 ✗）
+  //     + 步首结算     ⇒ 更坏：四条速率全 100% 偏（"待结算"在测量前就落到 state 里 ✗）
+  //   ⇒ 三个假设全错 ⇒ **停止猜测** ✗
+  //   ⇒ 正确下一步：**先打点**（把测量前后/步首步末的 q、zpeMultiplier、zf、matterCoeff 全打出来），
+  //      看清差在哪一层再动 ✗ —— 而不是继续猜 ✓
+  //   ⚠️ 另注：`qOf(state)` + `state.quantumFrozen` 的快照（`advance` 用）是**无害的改进** ✓ 已保留 ✓
+  // ★ 2025 状态：**设计已确认可行，卡在"加成数量"上** ✗
+  //   打点定位后的结论：
+  //     · 之前 97.8% 的"显示≠实发"**与量子无关** ✗ —— 是 `consistency` 拿"瞬时速率"
+  //       和"整步闭式解"比（`1 + c·dt/(2P0)`）✗；改成 dt=1e-7 后**速率 8/8 全一致** ✓
+  //     · 但接上 `+q³` 后，另外 3 条暗能量检查变成 0.00% ✗：
+  //       该场景 q≈16 ⇒ `+q³ = 4096`，而 ZPE 倍率基础只有 ≈12 ⇒ 量子项大 340 倍
+  //       ⇒ **把暗能量升级的效果淹没了** ✗（高效相变 / 相变增幅 / 凝聚斜率 都看不出变化）
+  //   ⇒ 所以这条设计的**落点没问题** ✓，要定的是**系数**（用户：得算数据 ✓）
+  //     候选见 `quantumZpeMultBonus`：+q²（温和）/ +q³（强势，会压过暗能量层 ✗）/ 2^q（✗ 不推荐）
+  // ★★★ 2025（用户裁定）：量子的 ZPE 加法项也吃引擎倍率（5 条之一）
+  m = m.add(quantumZpeMultBonus(qOf(state), engineBonusMult(state)));   // ★ 系数 0.1（q³/10）
   if (state.zpeFixedMultiplier) m = m.mul(state.zpeFixedMultiplier);
-  if (hasVoid(state, "v8")) m = m.mul(1.5);
+  if (hasVoid(state, "v8")) m = m.mul(1.5).mul(voidBoostMult(state));
   // ★ dm1「ZPE 倍率 ×2」。
   //
   //   原来这条里程碑靠 `state.zpeFixedMultiplier` 传递，但**没有任何代码
@@ -254,7 +320,7 @@ export function zpeBaseMultiplier(state) {
     const count = Object.values(state.voidUpgrades).filter(Boolean).length;
     b = b.mul(D(1).add(D(count).mul(10)));
   }
-  if (hasVoid(state, "v6")) b = b.mul(5);
+  if (hasVoid(state, "v6")) b = b.mul(5).mul(voidBoostMult(state));
   return b;
 }
 
@@ -337,12 +403,18 @@ export function darkEnergyMultiplier(state) {
   const coeff = Decimal.min(D(0.1).add(x.div(20).mul(0.15)), D(0.25));
   // ★ 量子：作为**基础加成**加进括号里（a区），量是 q²。
   //   `暗能量倍率 = (1 + 0.25·log2(暗能量)) + q²`
-  const base = D(1).add(x.mul(coeff)).add(quantumDeMultBonus(state.quantum));
+  // ★★★ 2025（用户裁定）：量子这项也吃引擎倍率（5 条之一）
+  const base = D(1).add(x.mul(coeff)).add(quantumDeMultBonus(qOf(state), engineBonusMult(state)));
   const accel = Decimal.pow(
     dreamUpgradeEffects(state).vacuumAccelEffectMult,
     deLevelOf(state, "vacuumAccel"),
   );
-  return base.mul(accel);
+  // ★ 2025 设计稿第 4 条：**ZPE 引擎提供的倍率也作用在暗能量倍率上**。
+  //   ⇒ 与第 3 条（`暗能量倍率 ^1.03 → ZPE 倍率`）**闭合成环** ✗
+  //   环增益验算见 `tools/zpe-engine-lab.mjs`：因为 `暗能量倍率 ∝ log2(暗能量)`（对数 ✓），
+  //   所以 `∂ln(DE倍率)/∂ln(DE)` 极小 ⇒ 整环增益 ≈ 1e-3 量级 ⇒ **安全** ✓
+  //   ⚠️ 但引擎等级不设上限时它会跟着 2^等级 一起膨胀 ⇒ **上限权在用户手里**（设计稿保留 ✓）
+  return base.mul(accel).mul(zpeEngineMultBonus(state));
 }
 
 /** 每转换一次得到多少暗能量 */
@@ -358,7 +430,8 @@ export function darkEnergyGainPerConversion(state) {
   if (hasDe(state, "dm5")) g = g.mul(darkEnergyMultiplier(state));
   // ★ 量子：作为**基础加成**加进括号里（a区），量是 log10(q)。
   //   `每次转换量 = ... × [1 + log10(q)]`
-  return g.mul(D(1).add(quantumDeGainBonus(state.quantum)));
+  // ★★★ 2025（用户裁定）：量子这项也吃引擎倍率（5 条之一）
+  return g.mul(D(1).add(quantumDeGainBonus(qOf(state), engineBonusMult(state))));
 }
 
 // ══════════════════════════════════════════════════════════
@@ -391,9 +464,63 @@ export function effectiveTraps(state) {
 // 各产线速率（每秒）
 // ══════════════════════════════════════════════════════════
 
+/**
+ * ★★★ 2025：**物质系数（唯一入口）** —— `dM/dt = particle × matterCoeff(state, particle)`
+ *
+ * ── 为什么搬到 formulas.js ──
+ *   它原来在 `engine.js`，而 `matterRate()`（显示侧）在这里**各算一遍基础产出** ⇒
+ *   两处极易分叉。项目已因此踩过 **4 次「显示 ≠ 实发」**：
+ *     ① 铸币倍率只在界面生效
+ *     ② `dm4b` 只加在 `darkEnergyRate()`
+ *     ③ 沉潜蓄能只加在 `matterRate`
+ *     ④ **2025 本轮**：`v3` 那里写裸 `D(1.5)`、`matterRate` 写 `D(1.5)×voidBoostMult`
+ *        ⇒ 引擎 17 级时显示比实发大 **2.09e6**（再被 `^k` 放大）✗
+ *   ⇒ 根治：**两边共用这一个函数**（`formulas.js` 里早先留的"理想解"注释，本次落实）✓
+ *
+ * ── 过载 / 爬升的落点 ──
+ *   用户裁定「**有且只影响获得速率**」⇒ 两个因子乘在**系数**上：
+ *     · 只改 `dM/dt`，不改物质存量、不改阈值 ✓
+ *     · `matterRate` 读同一函数 ⇒ 显示 == 实发 ✓
+ *
+ * @param {object} state
+ * @param {Decimal|number|null} particleCount 粒子数。
+ *   ⚠️ **默认取 `state.resources.particle`** —— 因为「系数」按定义就是**完整**系数
+ *     （含过载/爬升）。若默认给 null，`matterCoeff(state)` 与 `matterRate(state)` 就会
+ *     给出不同的值（实测差 8.18e17）⇒ 又变成"两处各算一遍" ✗
+ *     tick 里传**本片的 `P0`**（此刻 `state.resources.particle` 还是旧值）。
+ */
+export function matterCoeff(state, particleCount = undefined) {
+  const P = particleCount === undefined
+    ? (state.resources?.particle ?? null)
+    : particleCount;
+  const mb = kindProduct(state, "matterMul");
+  let zf = D(1);
+  if (state.zpeMilestones.m3) {
+    const factor = state.voidUpgrades.v9 ? 1.0 : 0.5;
+    zf = D(1).add(zpeMultiplier(state).sub(1).mul(factor));
+  }
+  const v3 = state.voidUpgrades.v3 ? D(1.5).mul(voidBoostMult(state)) : D(1);
+  const coeff = D(BASE.matterPerParticle)
+    .mul(mb)
+    .mul(globalMultiplier(state))
+    .mul(zf)
+    .mul(v3)
+    // ★★ 2025 B8：**b区** —— 对 a区括号整体取幂，指数由引擎等级给
+    .pow(matterTotalExponent(state))
+    // ★ 跨度层在**指数之外**：它是"第二路产物质"（ZPE→DE→物质）的独立机制
+    .mul(matterSpanMult(state));
+
+  //   ⚠️ 过载的触发量是「**未经削减的速率**」= `particle × coeff`
+  //      （若用削减后的速率去触发 → 自我引用 ⇒ 恒为 1 或来回抖 ✗）
+  const preRate = P != null
+    ? (P instanceof Decimal ? P : D(P)).mul(coeff)
+    : null;
+  return coeff.mul(overloadFactor(state, preRate)).mul(climbFactor(state));
+}
+
 /** 熵产出速率 */
 export function entropyRate(state) {
-  const v2 = hasVoid(state, "v2") ? D(1.5) : D(1);
+  const v2 = hasVoid(state, "v2") ? D(1.5).mul(voidBoostMult(state)) : D(1);
   let r = effectiveTraps(state)
     .mul(globalMultiplier(state))
     .mul(BASE.trapBaseRate)
@@ -402,7 +529,10 @@ export function entropyRate(state) {
     // ★ 量子：作用在**熵产出**这条单线上（不是全局加成）。
     //   理由见 globalMultiplier 的注释 —— 放全局加成等于乘在环的两端，
     //   环增益会变成 Q²，物质会一次跳到无限。
-    .mul(quantumEntropyMultiplier(state.quantum));
+    // ★★★ 2025（用户裁定）：量子→熵 也吃引擎倍率（5 条之一）。
+    //   ⚠️ 它会让"引擎 → 熵 → 物质"多一条路径 ⇒ 由 `consistency` 与
+    //      `zpe-engine-lab` 的环增益断言守（跑完必看）。
+    .mul(quantumEntropyMultiplier(qOf(state), engineBonusMult(state)));
   if (hasDe(state, "dm3")) r = r.mul(darkEnergyMultiplier(state));
   return r;
 }
@@ -415,30 +545,20 @@ export function entropyRate(state) {
  *    `consistency.mjs` 立刻报「物质速率误差 82.74%」。
  */
 export function matterRate(state) {
-  const mb = kindProduct(state, "matterMul");
-  let zf = D(1);
-  if (hasZpe(state, "m3")) {
-    const factor = hasV9(state) ? 1.0 : 0.5;
-    zf = D(1).add(zpeMultiplier(state).sub(1).mul(factor));
-  }
-  const v3 = hasVoid(state, "v3") ? D(1.5) : D(1);
-  // ★ 「未花 IP 加产率」（AD unspentBonus 同源）：**a区** 成员，硬封顶 ×1000（见 config）
-  const ub = unspentBoostMult(state);
-  const base = state.resources.particle
-    .mul(BASE.matterPerParticle)
-    .mul(mb)
-    .mul(globalMultiplier(state))
-    .mul(zf)
-    .mul(v3)
-    .mul(ub);
-
-  // ★ 量子 → 指数成长项：`dM/dt += R·ln10·M`
-  //   与 engine.js 的 tick 里那一整段**逐字对应**（改一处必须改另一处）。
-  const gRate = quantumGrowthRate(state.quantum, infinityRateMult(state));
-  const total = gRate.lte(0) ? base : base.add(state.resources.matter.mul(gRate).mul(Math.LN10));
-  // ★ 过载（软上限）：与 tick 走**同一个函数** —— 否则 consistency.mjs 会立刻报「显示 ≠ 实际」
-  // ★ 爬升形状（路线 1）：同一个族里的另一个因子（改形，不改层）
-  return total.mul(overloadFactor(state)).mul(climbFactor(state));
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2025：**改为唯一入口的直接调用** —— 不再在这里重算一遍基础产出
+  // ══════════════════════════════════════════════════════════
+  //   `dM/dt = particle × matterCoeff` ⇒ 这里就**只做这一次乘法** ✓
+  //
+  //   ⚠️ 为什么不再展开：本函数原来把 `base = particle × 每粒子各项 × …` **重算了一遍**，
+  //      与 `matterCoeff` 那套"各算一遍"⇒ 项目因此踩过 **4 次「显示 ≠ 实发」**
+  //      （最近一次：`v3` 少了 `voidBoostMult` ⇒ 差 2.09e6 ✗；再往前是沉潜蓄能 / dm4b / 铸币）
+  //   ⚠️ 我第一版改错：写成 `total.mul(matterCoeff(state))` —— 而 `total` **已含粒子数**
+  //      （它是速率），再乘「每粒子系数」⇒ 变成 `particle² × coeff`，量纲错 ✗
+  //      （实测比值 8.18e17 = particle × 2.09e6）
+  //
+  //   过载 / 爬升的软上限**在 `matterCoeff` 内**（用户裁定：有且只影响获得速率）✓
+  return state.resources.particle.mul(matterCoeff(state));
 }
 
 /**
@@ -457,25 +577,123 @@ export function climbFactor(state) {
   if (L.lte(CLIMB.knee)) return D(1);
   const over = L.sub(CLIMB.knee).toNumber();
   if (!(over > 1e-9)) return D(1);              // 拐点死区，避免 log10/pow 往返误差
-  return D(Math.pow(2, -over / CLIMB.halvingOrders));
+  // ★★★ 2025 同 `overloadFactor` 的修正：**等效斜率必须与 k 无关**。
+  //   它也**在 a区 内**（`matterRate` 里与 overload 相乘，再整体被 `^k` 取幂）
+  //   ⇒ 不补偿的话，k=13.86 时 `2^(−over×13.86/100)`：
+  //       M=1000（over=975）⇒ 2^−135 ≈ 1e−41 ⇒ 同样是"产出为 0" ✗
+  //   ⇒ 步长按 k 放大，使有效斜率恒为 `CLIMB.halvingOrders`（100 阶）✓
+  const kExp = Number(matterTotalExponent(state));
+  const kScale = Number.isFinite(kExp) && kExp > 1 ? kExp : 1;
+  const effHalving = CLIMB.halvingOrders * kScale;
+  // ★★ 同 `overloadFactor`：用 **`Decimal.pow`**（`Math.pow` 会在 number 域下溢成 0 ✗）
+  return new Decimal(2).pow(-over / effHalving);
 }
 
 /**
- * 过载因子：`2^(−(超出拐点的阶数) / halvingOrders)`。
- * 未超出拐点、或还没打破无限（那时是硬顶 + 强制大坍缩）时恒为 1。
+ * ★★★ 2025（用户裁定）：**过载的触发条件是「基础物质获得速率 > 1.8e308」，不是物质数量**。
  *
- * ⚠️ **必须被 matterRate 和引擎的 tick 同时使用**（SPEC「输出函数 == 运算函数」）。
+ * ── 用户原话 ──
+ *   「过载机制生效的时间应该在**基础物质获得速率大于 1.8e308** 时生效
+ *     （**有且只影响获得速率**）」
+ *
+ * ── 为什么这样才自洽 ──
+ *   物质是 Decimal（可到 1e9e15），**没有** 1.8e308 这个上限；
+ *   而 `Number.MAX_VALUE = 1.8e308` 是**双精度的上限** —— 它卡的是"每秒获得多少"，
+ *   也就是**速率**。所以过载的语义应当是「速率逼近双精度上限时开始收」，
+ *   而不是「物质数量跨过某个深度」。旧实现用 `matter.log10() > 拐点` ⇒ 触发点与速率无关 ✗
+ *
+ * ── 「只影响获得速率」怎么保证 ──
+ *   落点放在 `engine.js` 的 `matterCoeff()`（tick 积分用的系数）里 ⇒
+ *     · 它只乘进 `dM/dt`，**不改物质存量、不改阈值、不改任何"数量"**
+ *     · `matterRate` 也读同一个 `matterCoeff` ⇒ 显示与实发同源（不再各乘一次）✓
+ *
+ * @param {object} state
+ * @param {Decimal|number} baseRate  **未**被过载/爬升削减的物质获得速率
  */
-export function overloadFactor(state) {
+export function overloadFactor(state, baseRate) {
   if (!state.brokenInfinity) return D(1);      // 未打破：硬顶，不走软上限
-  const t = overloadThreshold(state);
-  const L = state.resources.matter.gt(0) ? state.resources.matter.log10() : D(0);
-  if (L.lte(t)) return D(1);
-  const over = L.sub(t).toNumber();
-  // 拐点附近给一个死区：log10/pow 的往返误差会让「刚好在拐点」算出 0.99999999999999，
-  // 那样界面上会显示成「×1.000（超 0.0 阶）」这种噪声。
+  const rate = baseRate == null
+    ? D(0)
+    : (baseRate instanceof Decimal ? baseRate : D(baseRate));
+  // ★★ 触发阈：双精度上限 `Number.MAX_VALUE = 1.8e308`（**速率**上限，不是数量上限）
+  //
+  //   ⚠️ **必须在对数域比较**：物质的获得速率是 Decimal，实测 168h 已达 **1e1943**
+  //     ⇒ 若写 `OVERLOAD.rateThreshold.log10()`，那是 `(1.8e308).log10() = 308.25`（没问题）；
+  //       但若写 `rate.toNumber()` 或对 rate 取 `Number(...)`，**1e1943 会溢出成 Infinity**，
+  //       一切比较都失真 ✗（我第一版就踩了这个：阈值判定恒为"超阈"）
+  //   ⇒ 用 `rate.log10()`（Decimal 的 log10 是安全的）与**预先算好的常数量级**比较 ✓
+  const rateLog = rate.gt(0) ? rate.log10() : D(0);
+  if (rateLog.lte(OVERLOAD.rateThresholdLog10)) return D(1);
+  const over = rateLog.sub(OVERLOAD.rateThresholdLog10).toNumber();
   if (!(over > 1e-9)) return D(1);
-  return D(Math.pow(2, -over / OVERLOAD.halvingOrders));
+
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2025 二次重做（用户裁定方案 B）：**渐近式**
+  // ══════════════════════════════════════════════════════════
+  //  用户质疑：「虽然是仿照 AD 中复制器的增长削弱逻辑，但**为什么能变成负增长**呢？」
+  //  ⇒ 完全正确。根因是可算的：
+  //
+  //    `rate = base × factor(over)`，令 `s = |d ln(factor)/d over|`
+  //    则 `d ln(rate)/d ln(base) = 1/(1 − k·s)`（k = 引擎的 b区指数）
+  //    ⇒ **硬约束 `k·s < 1`**；越界则速率随 base 上升而**下降** = 负增长 ✗
+  //
+  //    旧指数式 `factor = 1.2^(−over/2.63)` 配 `tierShift`
+  //      ⇒ `s = (ln1.2/2.63)·(1 + 0.25·档数)` —— **随档数无上界增长**
+  //      ⇒ 实测 over=5000 时 `s = 8.72`、`k·s = 120` ≫ 1 ⇒ 必然负增长 ✗
+  //
+  //    渐近式 `factor = 1/(1 + over/knee)^p`
+  //      ⇒ `s = (p/knee)/(1 + over/knee)` —— **随 over 递减**（在 over=0 取最大 `p/knee`）
+  //      ⇒ 只要 `p/knee < 1/k` 就**永远**不越界（与 over 无关）⇒ **结构性安全** ✓
+  //        本配置：`p/knee = 1/8430 = 1.19e-4`，`k` 上限 26 ⇒ `k·s ≤ 0.0031` ≪ 1 ✓
+  //
+  //  ⚠️ 语义差别（这是"变少"与"变慢"的分界）：
+  //    AD 的 `scaleFactor = 1.2 > 1` 乘在 **interval**（时间）上 ⇒ 只让**变慢**
+  //    我们曾把 `1/1.2 < 1` 乘在 **rate** 上 ⇒ 会让**变少**（可净下降）
+  //    渐近式把因子压成"有下界、极缓"的形状 ⇒ 速率与 base **同阶增长** ⇒ 回到了"变慢" ✓
+  //
+  //  `knee = 8430` 的依据：用户要求「推进到 1e308.25 不费更多时间」。
+  //    实测该点（11.13h）`over = 443.7` 阶 ⇒ 要因子 ≈ 1 就得 `knee ≫ 443.7`；
+  //    目标「最多慢 5%」（因子 ≥ 0.95）⇒ `knee ≥ 443.7 × 0.95/0.05 = 8430` ✓
+  const p = OVERLOAD.p ?? 1;
+  return new Decimal(1).div(new Decimal(1).add(over / OVERLOAD.knee).pow(p));
+}
+
+/**
+ * ★ 2025：**"这一轮跑够了"的单一判据**（自动坍缩 / 模拟器 / 界面提示共用）。
+ *
+ * 为什么必须有它：判据原来是**硬编码 `overloadFactor(s) < 0.05`**，散落在
+ *   `tools/stage-timing.mjs`（两处）等处。而 `0.05` 与过载强度是**强耦合**的：
+ *   过载一旦放松（因子变小 / 步长变大 / 开累进），这个值就可能**永远到不了**
+ *   ⇒ 自动坍缩永不触发 ⇒ 模拟与玩法一起卡死 ✗
+ * ⇒ 阈值改放 `OVERLOAD.crunchBelow`（与过载参数同一个 config 对象），
+ *   并由 `tools/overload-lab.mjs` 断言「在合理深度内一定可达」✓
+ *
+ * ⚠️ 未打破无限时**不适用**（那时是硬顶强制坍缩，见 `tick`）。
+ */
+export function shouldCrunch(state, baseRate = undefined) {
+  if (!state?.brokenInfinity) return false;
+  if (!state.resources?.matter?.gt(0)) return false;
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2025（用户裁定）：**收手判据改成「按本轮时间」**
+  // ══════════════════════════════════════════════════════════
+  //   为什么必须挪掉「按速率」这条：
+  //     `k`（b区指数）直接放大 rate ⇒ 按 rate 收手时 k↑ ⇒ **更早收手** ⇒ 深度变浅
+  //     ⇒ "k 越大 = 越快但收入越低"，方向反了 ✗（实测：k 每 +1 ⇒ 收手深度 −3646 阶）
+  //   改成按时间后：k↑ ⇒ 同样时间内推进更深 ⇒ 深度↑ ⇒ 收入↑ ✓ **k 变成纯收益**
+  //   ⇒ 这也让用户要的机制成立：「基于最快的一次无限时间」给量子加成
+  //     （k↑ ⇒ 更快 ⇒ T_best 更小 ⇒ 加成更高 ⇒ 正反馈，但被"时间上限"钉住 ⇒ 不发散 ✓）
+  //
+  //   ⚠️ 旧的 rate 判据**保留为兜底**：万一时间上限到不了，仍能把轮次结束掉 ⇒ 不卡死。
+  const limit = OVERLOAD.runSeconds;
+  if (limit != null && Number.isFinite(limit)) {
+    const elapsed = Number(state.runElapsed ?? 0) || 0;
+    if (elapsed >= limit) return true;
+  }
+  // ── 兜底：旧的 rate 判据 ──
+  const rate = baseRate !== undefined
+    ? baseRate
+    : matterRate(state);
+  return overloadFactor(state, rate).lt(OVERLOAD.crunchBelow ?? 0.05);
 }
 
 /**
@@ -596,6 +814,7 @@ export function conversion(state) {
   //    那套量子升级系统已整体删除，分支永远是死路，已移除。
   let perLevel = cfg.outputPerLevel;
   if (hasVoid(state, "v5")) perLevel += 0.5;
+  if (hasCollapse(state, "cm5")) perLevel *= transmuterIpMult(state);   // ⑤ 相变仪随 IP（对数）
   // ★ 「凝聚斜率」：直接加在**斜率**上（不是乘一个倍率）。
   //   加法形式让转换率封顶在 perLevel/thresholdPerLevel；
   //   抬斜率才能把这个上限本身推高，而且因为 L ∝ log(资源)，
@@ -615,6 +834,13 @@ export function conversion(state) {
   if (hasDe(state, "dm2")) {
     threshold = threshold.div(darkEnergyMultiplier(state));
   }
+  // ★ IC：挑战激活时，熵→粒子的**熵需求**被放大（唯一落点 ✓；放在所有阈值修正之后 ✓）
+  threshold = threshold.mul(icEntropyMult(state));
+  if (hasCollapse(state, "cm3")) threshold = threshold.mul(0.5);   // ③ 100:1 -> 50:1
+  // ★★ 2025 em6（永恒里程碑 6）：「熵到粒子的熵消耗再除以 1.2」
+  //   放在**所有修正的最后**（与 cm3、IC 同一个位置）—— 顺序不影响乘除结果，
+  //   但集中在这里便于审计"阈值到底被谁改过" ✓
+  if (hasEternityMilestone(state, "em6")) threshold = threshold.div(1.2);
   return { threshold, output };
 }
 
@@ -639,7 +865,9 @@ export function particleRate(state) {
   //      增长率 √(k·j) 随全局加成一起涨，所以整条升级被废弃。）
   // ⚠️ dm4b **不在这里**。它作用于「相变转换速率」（ZPE→暗能量），
   //    不是「熵凝聚转换速率」（熵→粒子）。见 darkEnergyRate()。
-  return entropyRate(state).div(threshold).mul(output);
+  // ★ 量子 → 粒子获得的**时变增幅**（替代 R 的那个杠杆）：**必须与 `engine.js` 的 tick 同项**
+  //   （踩过三次"显示 ≠ 实发"，根因每次都是"两处各算一遍基础产出"）。
+  return entropyRate(state).div(threshold).mul(output).mul(particleTimeBoost(state));
 }
 
 // ══════════════════════════════════════════════════════════
@@ -705,8 +933,7 @@ export function deUpgradeCost(state, id) {
     matter: cfg.costMatter ? cfg.costMatter(lv) : null,
     particle,
     zpe: cfg.costZpe ? cfg.costZpe(lv) : null,
-    darkEnergy,
-  };
+    darkEnergy };
 }
 
 /**
@@ -734,6 +961,73 @@ export function checkZpeMilestones(state) {
     }
   }
   return got;
+}
+
+/**
+ * ★ 量子里程碑（2025 草案）：键在**累计量子对数**上（`quantumPairsTotal`，大坍缩不清零）。
+ *
+ * 为什么用累计量：当前量子数每次大坍缩归零 ⇒ 键在它上面的里程碑第一轮就拿完、之后形同虚设。
+ * 这正是 AD 的手法③（`totalAMMult` 用累计反物质、`currentAMMult` 用当前值）。
+ * 详见 docs/QUANTUM-MILESTONES.md。
+ */
+export function checkQuantumMilestones(state) {
+  const got = [];
+  const total = state.quantumPairsTotal ?? D(0);
+  for (const m of QUANTUM_MILESTONES) {
+    if (!state.quantumMilestones[m.id] && total.gte(m.need)) {
+      state.quantumMilestones[m.id] = true;
+      got.push(m);
+    }
+  }
+  return got;
+}
+
+/** 已达成的量子里程碑 */
+export function quantumMilestonesDone(state) {
+  return QUANTUM_MILESTONES.filter((m) => state.quantumMilestones?.[m.id]);
+}
+
+/**
+ * 粒子增幅速率常数 `b`（阶/秒）—— **替代 R 的那个杠杆**。
+ *
+ * `b = b0 · (1 + √q / 10) · 【量子里程碑的乘算加成】·【档位加速】`
+ *   · `q` = 当前量子个数（每轮重置）
+ *   · 档位加速：`qm2` 达成后，每档位 ×1.06（这是把 24 档压到 ~90h 的来源）
+ *   · 硬封顶 `bMax`（用户既有要求：影响永恒阶段的东西必须有极强软上限）
+ *
+ * 时变增幅 `g(t) = 10^(b·本轮已过时间)`：**g 必须随时间增长**，否则只是"平移高度"到不了硬顶。
+ */
+export function particleBoostRate(state) {
+  const b0 = DE_SPAN.b0;
+  const q = Math.max(0, qOf(state).toNumber());
+  let b = b0 * (1 + Math.sqrt(q) / 10);
+  // 里程碑的乘算加成（qm1/qm3/qm6 是 b 加成；qm2 是"开启档位加速"）
+  for (const m of quantumMilestonesDone(state)) {
+    if (m.kind === "b") b *= m.value;
+  }
+  // 档位加速：qm2 达成后，每档位 ×1.0209（档位 = 已大坍缩次数）
+  // ★ 2025 B1：改走 `tierAccelMult()` —— 原式 `Math.pow(tierAccel, 无界档位数)` 在
+  //   破∞后的坍缩刷屏里会算出 Infinity ⇒ b=Infinity ⇒ softCapB 出 NaN ⇒ 全链冻结 ✗
+  b *= tierAccelMult(state);
+  // ★ 2025：R 退休后，原先"改成长速率"的三个旋钮里**只剩两个**
+  //   （∞「速率解放」/ 档位 rate 里程碑）—— 「坍缩加速器」已整个删除（用户裁定）。
+  //   `infinityRateMult()` 仍是它们的唯一汇总入口 ✓
+  //   于是它们的作用从"抬 R"变成"抬 b"（同样是提速，但落点在粒子线，环外 ✓）
+  b *= infinityRateMult(state).toNumber();
+  // ★ 阈值软上限（用户 2025 选定）：不再用硬封顶 `min(b, bMax)` ✗
+  //   低于阈值原样通过；超过则 `阈值 + 超出·2^(−超出/跨度)` ⇒ 有界、平滑 ✓
+  return softCapB(b, state);
+}
+
+/**
+ * 粒子获得的时变增幅 `g = 10^(b · 本轮已过时间)`（甲方案：时间**每轮重置**）。
+ *
+ * 用户选甲的理由：若用全局累计时间，堆叠会让时间失去意义（第二次大坍缩起瞬间到顶）。
+ */
+export function particleTimeBoost(state) {
+  const b = particleBoostRate(state);
+  const t = Math.max(0, (state.infinityElapsed ?? 0));      // 秒；大坍缩时归零
+  return Decimal.pow(10, b * t);
 }
 
 /**

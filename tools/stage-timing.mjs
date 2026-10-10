@@ -1,17 +1,23 @@
+import { darkEnergyRate } from "../src/formulas.js";
+import { zpeRate } from "../src/formulas.js";
+import { breakInfinity } from "../src/engine.js";
+import { buyInfinityUpgrade } from "../src/engine.js";
+import { buyDreamUpgrade } from "../src/engine.js";
+import { buyDeUpgrade } from "../src/engine.js";
 /**
  * tools/stage-timing.mjs —— **全阶段成长时长表（真实仿真）**
  *
  * 用户要求：「先做时长表，结合真实仿真汇总表格」。
  *
- * 与 `pace-model`（解析式）的区别：这里**跑的是真引擎**（`src/engine.js` 的
+ * 与已归档的 `pace-model`（解析式，见 docs/archive/pace-model.mjs.txt）的区别：这里**跑的是真引擎**（`src/engine.js` 的
  * `advance` / 购买函数 / `tick`），只是把"玩家操作"换成一个贪心策略。
  * 所以表里的时间就是"会玩的玩家在这个版本下需要多久"。
  *
- * ── 策略（与 infinity-sim 同源，另加本轮新机制）──
+ * ── 策略（与已归档的 infinity-sim 同源，另加本轮新机制）──
  *   · 熵/熵阱不够就点 10 下
  *   · 买满三条主升级 / 熵阱 / 虚空 / 暗能量 / 梦想 / ∞ 一次性 / ①
  *   · 打破无限；之后过载压到 5% 就大坍缩
- *   · **新增**：铸币（买满，受档位闸门）、坍缩加速器（买满）、ZPE 引擎（解锁 + 买满）
+ *   · **新增**：铸币（买满，受档位闸门）、ZPE 引擎（解锁 + 买满）
  *
  * 用法：
  *   node tools/stage-timing.mjs              跑 48 游戏小时，输出阶段表
@@ -22,18 +28,16 @@ import Decimal from "../dist/break_eternity.esm.js";
 import { pathToFileURL } from "node:url";
 import { newState } from "../src/state.js";
 import {
-  breakInfinity, buyAccel, buyCoinage, buyDeUpgrade, buyDreamUpgrade, buyInfinityUpgrade,
   buyRepeatable, buyTrap, buyVoidUpgrade, buyZpeEngineLevel, doBigCrunch, doClick,
   advance, unlockZpeEngine,
 } from "../src/engine.js";
 import {
   BREAK_INFINITY, COLLAPSE, DE_UPGRADES, DREAM_UPGRADES, INFINITY_ORDER, INFINITY_UPGRADES,
-  REPEATABLE, VOID_UPGRADES, coinageCap, coinageCost, coinageLevel, coinageMult, eternityPointGain,
-  timeIPPerSecond,
+  REPEATABLE, VOID_UPGRADES, eternityPointGain,
   // eslint-disable-next-line
   // (诊断用到的都在上面)
 } from "../src/config.js";
-import { overloadFactor } from "../src/formulas.js";
+import { overloadFactor, particleBoostRate, shouldCrunch } from "../src/formulas.js";
 import {
   bigCrunchGain,
 } from "../src/formulas.js";
@@ -95,12 +99,19 @@ export function runStages(hours = HOURS, dt = DT) {
     // 本轮新机制
     unlockZpeEngine(s);
     buyZpeEngineLevel(s, true);
-    buyCoinage(s, true);
-    buyAccel(s, true);
 
-    // 打破无限后：过载压到 5% 就收（和 infinity-sim 同策略）
-    if (s.brokenInfinity && s.resources.matter.gt(0) && overloadFactor(s).lt(0.05)) doBigCrunch(s);
+    // 打破无限后：过载压到 5% 就收（和已归档的 infinity-sim 同策略）
+    if (shouldCrunch(s)) {
+      doBigCrunch(s);
+    }
 
+    { s._t = (s._t ?? 0) + dt; s._n = (s._n ?? 0) + 1;
+      if (s._n % 200 === 0) {
+        const deL = s.darkEnergy ? s.darkEnergy.log10().toNumber() : 0;
+        const mL = s.resources.matter ? s.resources.matter.log10().toNumber() : 0;
+        const _z = String(zpeRate(s)).slice(0, 18), _d = String(darkEnergyRate(s)).slice(0, 18), _a = String(s.deAccum).slice(0, 14);
+    console.log(`  [traj] t=${(s._t / 3600).toFixed(2)}h DE=1e${deL.toFixed(1)} 物质=1e${mL.toFixed(1)} IP=${s.infinityPoints.toString()} crunch=${s.bigCrunchCount.toString()} zpeRate=${_z} deRate=${_d} deAccum=${_a}`);
+      } }
     advance(s, dt);
     t += dt;
 
@@ -157,21 +168,16 @@ export function runProfile(hours = 24, dt = DT) {
     for (let i = 0; i < 20 && buyInfinityUpgrade(s, "ipDouble").ok; i++) { /* ① */ }
     unlockZpeEngine(s);
     buyZpeEngineLevel(s, true);
-    buyCoinage(s, true);
-    buyAccel(s, true);
-    if (s.brokenInfinity && s.resources.matter.gt(0) && overloadFactor(s).lt(0.05)) doBigCrunch(s);
+    if (shouldCrunch(s)) {
+      doBigCrunch(s);
+    }
     advance(s, dt);
     t += dt;
     if (Math.abs(t - Math.round(t / 3600) * 3600) < dt / 2 && Math.round(t / 3600) > 0) {
       samples.push({
         hour: Math.round(t / 3600),
         ip: s.infinityPoints.max(1).log10().toNumber(),
-        incomePerHour: timeIPPerSecond(s).toNumber() * 3600,
         depthGain: bigCrunchGain(s).toNumber(),
-        coinLv: coinageLevel(s).toNumber(),
-        gate: coinageCap(s),
-        coinPrice: coinageCost(s).max(1).log10().toNumber(),
-        coinMult: coinageMult(s).log10().toNumber(),
         ipDouble: Number(s.ipDoubleLevel ?? 0),
         crunches: Number(s.bigCrunchCount ?? 0),
         matterLog: s.resources.matter.max(1).log10().toNumber(),
@@ -266,6 +272,26 @@ if (check && isMain) {
   const seq = RELIABLE.map((k) => res.at[k]).filter((v) => v !== undefined);
   ck("阶段顺序单调（已校准的 6 个阶段）", seq.every((v, i) => i === 0 || v >= seq[i - 1]),
     `${seq.length} 个阶段全部有序`);
+
+  // ★★ 集成级断言：**量子里程碑真的接进引擎了吗**（2025 补）
+  //
+  //   为什么必须有这一条：`checkQuantumMilestones()` 曾经**从未被 tick 调用** ✗
+  //   —— 而单元级断言（直接调那个函数）完全看不见这一点 ✗
+  //   结果：qm1~qm7 在真实引擎里全是死的（b 的加成 / 档位加速 / qm4/qm5/qm7 全不生效），
+  //   破∞因此慢了 1.3 小时 ✗。**单元级测"函数对不对"，集成级才能测"有没有被调用"** ✓
+  {
+    const st = res.s;
+    const total = st.quantumPairsTotal?.toNumber() ?? 0;
+    ck("★ 集成：量子里程碑被 tick 真正检查（累计对数 ≥3 ⇒ qm2 已达成）",
+      total < 3 || st.quantumMilestones?.qm2 === true,
+      `累计对数 ${total}｜qm1=${!!st.quantumMilestones?.qm1} qm2=${!!st.quantumMilestones?.qm2}`);
+    // b 必须**随档位增长**（= 档位加速真的生效）；用同一状态改档位数来对比
+    const withTiers = particleBoostRate({ ...st, bigCrunchCount: new Decimal(20) });
+    const noTiers = particleBoostRate({ ...st, bigCrunchCount: new Decimal(0) });
+    ck("★ 集成：档位加速生效（b 随大坍缩次数增长）",
+      st.quantumMilestones?.qm2 ? withTiers > noTiers : true,
+      st.quantumMilestones?.qm2 ? `b(20 档) ${withTiers.toFixed(5)} > b(0 档) ${noTiers.toFixed(5)}` : "（qm2 尚未达成，跳过）");
+  }
   ck("已把「判定条件待校准」的阶段记下来（不藏问题）", true,
     "可疑：voidUpgrade / transmuterUnlock（时刻早于前序阶段）→ 下一轮校准");
   ck("量子层解锁发生在第一次大坍缩之前",
@@ -274,19 +300,26 @@ if (check && isMain) {
     (res.at.breakInfinity ?? 0) > (res.at.firstCrunch ?? 1e9), "∞ 层晚于坍缩层");
   // ★ 这一条**故意记录"当前做不到"**：设计目标是 24h 到永恒门槛，而本版本实测到不了。
   //   把它写成断言而不是注释，是为了让"节奏缺口"永远出现在测试输出里，不会被忘掉。
+  // ★★ 2025 重设：用户把节奏整体改快了（"用户等不起"）——
+  //   新设计目标：**第一次大坍缩 = 1 小时**、**打破无限 ≈ 3.6 小时**、每轮 ~10 分钟。
+  //   ⚠️ 旧断言钉的是"48h 到不了永恒 / 5~30h 破∞ / 1h 每轮"，那些**全部作废** ✗
+  //      （它们曾被 AD 标尺推导出来，用户已明确不采用 ⇒ 标尺只作参考 ✓）
   const seg = (a, b) => ((res.at[b] ?? 0) - (res.at[a] ?? 0)) / 3600;
-  ck("节奏缺口已量化（本版本 48h 到不了永恒门槛）", res.at.eternityGate === undefined,
-    `48h 后 IP 只有 1e${res.s.infinityPoints.max(1).log10().toNumber().toFixed(1)}` +
-    `、${res.s.bigCrunchCount?.toString() ?? 0} 次大坍缩（设计要 1e308.25 / 24 次）`);
-  ck("打破无限之前的总时长在 5~30 小时区间", seg("spark", "breakInfinity") > 5 &&
-    seg("spark", "breakInfinity") < 30,
+  ck("★ 第一次大坍缩 ≈ 1 小时（用户定）",
+    (res.at.firstCrunch ?? 0) > 0 && Math.abs((res.at.firstCrunch ?? 0) / 3600 - 1) < 0.25,
+    `实测 ${((res.at.firstCrunch ?? 0) / 3600).toFixed(2)} 小时`);
+  ck("★ 打破无限 ≈ 3.6 小时（比旧值 5.35h 快 33%）",
+    Math.abs(seg("spark", "breakInfinity") - 3.6) < 1.0,
     `开局 → 打破无限 = ${seg("spark", "breakInfinity").toFixed(2)} 小时`);
-  // 每次大坍缩的实测耗时（设计假设 1 小时）
+  // 每次大坍缩的实测耗时（新设计假设 ~0.2 小时）
   const crunches = Number(res.s.bigCrunchCount ?? 0);
-  const perCrunch = crunches > 0 ? (res.t / 3600 - seg("spark", "breakInfinity")) / crunches : 0;
-  ck("★ 实测每次大坍缩耗时（设计假设 1.0 小时）", perCrunch > 0.8,
-    `实测 ${perCrunch.toFixed(2)} 小时/次 —— 比设计慢 ${(perCrunch).toFixed(1)}×，这是"挂机太长"的主因`);
+  const perCrunch = crunches > 1
+    ? ((res.at.breakInfinity ?? res.t) - (res.at.firstCrunch ?? 0)) / 3600 / (crunches - 1)
+    : 0;
+  ck("★ 实测每次大坍缩耗时（新设计假设 ~0.2 小时）", perCrunch > 0 && perCrunch < 0.6,
+    `实测 ${perCrunch.toFixed(2)} 小时/次（共 ${crunches} 次）`);
   console.log();
   console.log(`  ${fails === 0 ? "全部通过 ✅" : `${fails} 项失败 ❌`}`);
   process.exit(fails ? 1 : 0);
 }
+

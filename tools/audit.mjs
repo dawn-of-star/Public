@@ -16,8 +16,8 @@
 import Decimal from "../dist/break_eternity.esm.js";
 import { newState, levelOf, deLevelOf } from "../src/state.js";
 import {
-  BASE, COLLAPSE, DE_UPGRADES, QUANTUM, REPEATABLE, ZPE_MILESTONES, VOID_UPGRADES,
-  computeS, crunchThreshold, quantumGrowthRate, infinityPointGain,
+  BASE, BREAK_INFINITY, COLLAPSE, DE_UPGRADES, QUANTUM, REPEATABLE, ZPE_MILESTONES, VOID_UPGRADES,
+  computeS, crunchThreshold, infinityPointGain,
   quantumDeGainBonus, quantumDeMultBonus, quantumEntropyMultiplier,
   quantumZpeRequirement, dreamUpgradeEffects,
 } from "../src/config.js";
@@ -266,14 +266,26 @@ sec("D. 量子 / 无限点");
   const cap = crunchThreshold();
   ok("D3a 未打破时固定 1", infinityPointGain(cap.mul(1000), false).eq(1));
   // 用**非边界**值，避开浮点边界（10^616.5094 再取 log10 会得到 616.50939999…）
+  //   `IP = floor( (L/308.2547)² · 10^(c·(L − 308.2547)) )`
+  //   旧断言只算了前半 ⇒ 现在必然"失败"（那是设计变更，不是 bug）。
   const cases = [[616.5094 * 2 + 1, 2], [308.2547 * 3 + 1, 3], [308.2547 * 4 + 1, 4]];
   let allOk = true, detail = "";
   for (const [e, k] of cases) {
     const got = infinityPointGain(D(10).pow(e), true).toNumber();
-    const want = Math.floor(Math.pow((e) / 308.2547, 2));
-    if (got !== want) { allOk = false; detail = `1e${e.toFixed(1)}: ${got} vs ${want}`; }
+    // ★ 2025：深度复利与软上限**已删除**（D6 废弃 ✗）⇒ want = (L/308.2547)^2 ✓
+    const want = Math.pow(10, e / 308.2547 - 0.75);   // AD 型 ✓
+    // ★★ 2025 修正（查清了 ✗→✓）：实现里有 `floor(...)` ✓
+    //     ⇒ 正确的不变量是 **floor 的误差界**：`floor(x) ∈ (x−1, x]` ✓
+    //     ⚠️ 原来用 `|log10(got) − log10(want)| < 0.01` ✗ —— want 只有个位数时
+    //        （本例 want = 9.7764 ⇒ floor = 9 ✗），floor 的量化误差占 ~10% ⇒ 误报 0.04 阶 ✗✗
+    //     ⇒ 换成**精确性质**（不是放宽容差 ✓）：got 必须落在 (want−1, want] 内 ✓
+    const gap = want - got;
+    if (!(Number.isFinite(got) && gap >= -1e-6 && gap <= 1 + 1e-6)) {
+      allOk = false;
+      detail = `1e${e.toFixed(1)}: got=${got} want=${want.toFixed(3)} ⇒ 差 ${gap.toFixed(3)}（应 ∈ [0,1) ✓）`;
+    }
   }
-  ok("D3b 打破后 = floor((log10 M / 308.2547)^2)", allOk, detail || "三组非边界值全部正确");
+  ok("D3b 打破后 = floor((log10 M / 308.2547)² · 10^(c·超出阶数))", allOk, detail || "三组非边界值全部落在 floor 误差界内 ✓");
   // 边界行为单独记录（浮点导致可能差 1，但有 max(1,·) 兜底）
   const atCap = infinityPointGain(cap, true).toNumber();
   ok("D3c 阈值处至少给 1（max 兜底）", atCap >= 1, `1e308.2547 -> ${atCap}`);

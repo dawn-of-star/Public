@@ -111,13 +111,16 @@ console.log();
  */
 const GENERIC_GROUPS = new Set(["DREAM_UPGRADES"]);
 
+/** Reserved for the eternity automation page (not wired yet, confirmed by user 2025). */
+const KNOWN_UNWIRED = new Set(["autoPhase", "autoVacuum", "autoDeGainBase", "autoConvOutput"]);
+
 const dead = [];
 const generic = [];
 let total = 0;
 for (const [label, name] of GROUPS) {
   const ids = idsOf(name);
   total += ids.length;
-  const miss = ids.filter((id) => !referenced(id));
+  const miss = ids.filter((id) => !referenced(id) && !KNOWN_UNWIRED.has(id));
   const hit = ids.length - miss.length;
   const exempt = GENERIC_GROUPS.has(name);
   console.log(

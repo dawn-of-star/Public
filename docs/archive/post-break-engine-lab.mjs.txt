@@ -1,0 +1,122 @@
+import { INFINITY_ORDER } from "../src/config.js";
+/**
+ * tools/post-break-engine-lab.mjs —— **真实引擎**跑「打破无限 → 永恒」，逐段拉表
+ *
+ * 为什么需要它：`post-break-runaway-lab` 的 IP/深度是**粗口径** ✗（它只用来做 ODE 推导）。
+ *   这一版**跑真引擎**（`src/engine.js`）+ 一个贪心玩家策略，把该段的曲线如实打出来：
+ *     时刻 / log10(暗能量) / 引擎等级 / 跨度幂 k / log10(物质) / IP / **物质 log 的每秒增量**
+ *
+ * ★ 判据：**每秒增量应当随时间下降**（自我减速 ✓）。
+ *   开根削弱前它是上升的（runaway ✗），削弱后应当下降 ✓。
+ *
+ * 用法：node tools/post-break-engine-lab.mjs [--check] [--hours=6]
+ */
+import Decimal from "../dist/break_eternity.esm.js";
+import { newState } from "../src/state.js";
+import {
+  advance, breakInfinity, buyDeUpgrade, buyDreamUpgrade, buyInfinityUpgrade,
+  buyRepeatable, buyTrap, buyVoidUpgrade, buyZpeEngineLevel, doBigCrunch, doClick, tick,
+} from "../src/engine.js";
+// ★ 复用**已验证能打破无限**的策略与状态（stage-timing 跑得通 ✓），避免自己搓策略卡在破∞前 ✗
+import { runStages } from "./stage-timing.mjs";
+import { BREAK_INFINITY, DE_UPGRADES, DE_SPAN, DREAM_UPGRADES, REPEATABLE, VOID_UPGRADES } from "../src/config.js";
+import { matterSpanExponent } from "../src/config.js";
+
+const D = (v) => new Decimal(v ?? 0);
+const pad = (s, n) => String(s).padEnd(n);
+const check = process.argv.includes("--check");
+const hoursArg = process.argv.find((a) => a.startsWith("--hours="));
+const HOURS = hoursArg ? Number(hoursArg.slice(8)) : 6;
+
+const ETER = D("1e308.25");           // 永恒门槛（IP）
+
+/** 贪心策略：能买就买（与 stage-timing 同源口径 ✓） */
+function greedy(s) {
+  if (s.resources.traps.lt(3) || s.resources.entropy.lt(1)) for (let c = 0; c < 10; c++) doClick(s);
+  for (const id of Object.keys(REPEATABLE)) buyRepeatable(s, id, true);
+  buyTrap(s, true);
+  for (const id of Object.keys(VOID_UPGRADES)) buyVoidUpgrade(s, id);
+  for (const id of Object.keys(DE_UPGRADES)) buyDeUpgrade(s, id);
+  for (const d of DREAM_UPGRADES) buyDreamUpgrade(s, d.id);
+  // ∞ 层：先打破无限，再按价格买一次性升级，最后把余额灌进引擎等级
+  if (!s.brokenInfinity) { if (s.infinityPoints.gte(BREAK_INFINITY.unlockCost)) breakInfinity(s); }
+  else { for (const id of INFINITY_ORDER) buyInfinityUpgrade(s, id); }
+  buyZpeEngineLevel(s, true);
+}
+
+/** 大坍缩时机：破∞前撞顶就坍缩；破∞后等物质爬过膝盖 + 40 阶（贪深）就坍缩 */
+function maybeCrunch(s) {
+  if (!s.brokenInfinity) return false;
+  const knee = BREAK_INFINITY.maxLog10 + 0.00432 * s.quantum.toNumber();
+  if (s.resources.matter.log10().toNumber() > knee + 40) { doBigCrunch(s); return true; }
+  return false;
+}
+
+// ★★ 预跑：用 stage-timing 的**同一策略**跑到打破无限（那条路径已验证 ✓）
+//   为什么要这样：破∞前物质是**硬顶**（不能挖深 ✗）⇒ 深层复利恒等于 1 ⇒ 我自搓的
+//   "浅坍缩"策略 4 小时都攒不到 128 IP ✗（实测 log10(IP) 一直是 0.00 ✗）
+const PRE_HOURS = Number(process.env.PRE_HOURS ?? 4);
+const pre = runStages(PRE_HOURS, 2);
+const s = pre.s;
+const tBreak = pre.at.breakInfinity ?? NaN;
+console.log("=".repeat(112));
+console.log(`预跑 ${PRE_HOURS} 小时（stage-timing 策略）⇒ 打破无限于 ${Number.isFinite(tBreak) ? (tBreak / 3600).toFixed(2) + " h" : "未达成 ✗"}`);
+console.log(`   状态：大坍缩 ${Number(s.bigCrunchCount)} 次｜IP = 1e${s.infinityPoints.max(1).log10().toNumber().toFixed(2)}｜引擎等级 ${Number(s.zpeEngineLevel ?? 0)}`);
+console.log("=".repeat(112));
+
+const rows = [];
+let lastMLog = s.resources.matter.log10().toNumber(), lastT = 0, t = 0;
+const DT = 2, SAMPLE = 30;            // 每 2 秒一步，每 60 秒记一次
+
+console.log(`续跑上限 ${HOURS} 小时｜开根削弱已生效｜判据：物质 log 增速应**有界**且**趋降**`);
+console.log("=".repeat(112));
+while (t < HOURS * 3600) {
+  greedy(s);
+  advance(s, DT);
+  const t2 = maybeCrunch(s);
+  t += DT;
+  if (t % (SAMPLE * DT) === 0 || t2) {
+    const mLog = s.resources.matter.log10().toNumber();
+    const perSec = lastT > 0 ? (mLog - lastMLog) / (t - lastT) : 0;
+    rows.push({ t, mLog, perSec, de: s.darkEnergyTotal.max(1).log10().toNumber(), lv: Number(s.zpeEngineLevel ?? 0), k: matterSpanExponent(s), ip: s.infinityPoints.max(1).log10().toNumber() });
+    lastMLog = mLog; lastT = t;
+    if (s.infinityPoints.gte(ETER)) break;
+  }
+}
+console.log(`  ${pad("时刻", 8)}${pad("log10(DE总)", 12)}${pad("引擎等级", 10)}${pad("k", 7)}${pad("log10(物质)", 13)}${pad("log10(IP)", 11)}${pad("物质log/秒", 12)}趋势`);
+let prev = 0;
+for (const r of rows) {
+  if (Math.round(r.t / 60) % 5 !== 0 && r !== rows[rows.length - 1]) continue;
+  const trend = prev === 0 ? "" : r.perSec > prev * 1.05 ? "✗ 加速" : r.perSec < prev * 0.95 ? "✓ 减速" : "— 平";
+  console.log(`  ${pad((r.t / 60).toFixed(1) + " 分", 8)}${pad(r.de.toFixed(2), 12)}${pad(r.lv, 10)}${pad(r.k.toFixed(3), 7)}${pad(r.mLog.toFixed(1), 13)}${pad(r.ip.toFixed(2), 11)}${pad(r.perSec.toFixed(3), 12)}${trend}`);
+  prev = r.perSec;
+}
+console.log();
+
+if (check) {
+  console.log("=".repeat(112));
+  console.log("定点断言");
+  console.log("=".repeat(112));
+  let fails = 0;
+  const ck = (label, ok, detail) => {
+    if (!ok) fails++;
+    console.log(`  ${ok ? "✅" : "❌"} ${pad(label, 46)} ${detail}`);
+  };
+  // 趋势：后半段的平均增量 < 前半段（自我减速 ✓）
+  const half = Math.floor(rows.length / 2);
+  const avg = (a) => (a.length ? a.reduce((x, r) => x + r.perSec, 0) / a.length : 0);
+  const first = avg(rows.slice(0, half)), second = avg(rows.slice(half));
+  ck("★ 自我减速：后半段的物质 log 增速 < 前半段（开根生效 ✓）", second < first,
+    `前 ${first.toFixed(3)} → 后 ${second.toFixed(3)} 阶/秒`);
+  ck("★ 该段的 log 增速**有界**（不会随时间爆炸 ✗）",
+    Math.max(...rows.map((r) => r.perSec)) < 100, `峰值 ${Math.max(...rows.map((r) => r.perSec)).toFixed(2)} 阶/秒`);
+  ck("★ k 落在 [1, kMax] 内", rows.every((r) => r.k >= 1 - 1e-9 && r.k <= DE_SPAN.kMax + 1e-9),
+    `实测 ${Math.min(...rows.map((r) => r.k)).toFixed(3)} ~ ${Math.max(...rows.map((r) => r.k)).toFixed(3)}`);
+  ck("★ 引擎等级单调不减（只买不降）",
+    rows.every((r, i) => i === 0 || r.lv >= rows[i - 1].lv), `末值 ${rows[rows.length - 1].lv}`);
+  ck("标尺：到永恒门槛的时长（设计区间随用户定）", rows[rows.length - 1].ip >= 308 - 1e-6,
+    `末 IP = 1e${rows[rows.length - 1].ip.toFixed(2)}（门槛 1e308.25）`);
+  console.log();
+  console.log(`  ${fails === 0 ? "全部通过 ✅" : `${fails} 项失败 ❌`}`);
+  process.exit(fails ? 1 : 0);
+}

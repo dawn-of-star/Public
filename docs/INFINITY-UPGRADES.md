@@ -1,12 +1,12 @@
 # ∞ 层升级（已实现 12 条 + 候选清单）
 
-> 版本：0.5.1 · 状态：**①②③④ + 起点跃迁 I~IV + 速率解放 I~IV 已实现**；
+> 版本：0.6.13 · 状态：**①②③④ + 起点跃迁 I~IV + 速率解放 I~IV 已实现**；
 > **爬升形状（路线 1）与 ④ 的 30 分钟上限也已落地**（见 3.1 / 3.2）
 > 参考对象：AD（反物质维度）原版无限升级，源码见 `E:\game\AD-breaketernity-main\src\core\secret-formula\infinity\infinity-upgrades.js`
 
 ---
 
-## 0.5.1 已实现清单（src/config.js 的 INFINITY_UPGRADES）
+## 0.6.13 已实现清单（src/config.js 的 INFINITY_UPGRADES）
 
 | # | 名字 | 价格 | 效果 | 着色（按位置） |
 |---|---|---|---|---|
@@ -15,9 +15,9 @@
 | ③ | 相变超频 | 1 | 相变仪速率 ×(1 + 无限点×0.5) | 暗能量 |
 | ④ | 无限长河 | 3 | **每秒实时**获得「1÷60」点（吃 ① 的加成），单次最多计 30 分钟 | 无限点 |
 | ⑤~⑧ | 起点跃迁 I~IV | 20/40/80/300 | 每次大坍缩后以 **1e50/1e100/1e150/1e200** 物质开局 | 物质 |
-| ⑨~⑫ | 速率解放 I~IV | 10/100/1e3/1e4 | 量子成长速率上限 ×1.10/×1.10/×1.15/×1.20（**合计 ×1.6698**） | 量子 |
+| ⑨~⑫ | 速率解放 I~IV | 10/100/1e3/1e4 | 爬升速率上限 ×1.10/×1.10/×1.15/×1.20（**合计 ×1.6698**）<br>（R 退休后改挂粒子增幅速率 `b`） | 量子 |
 
-实测（`tools/infinity-sim.mjs --hours=14`）：②③ 在 2h/3.5h 买到、①Lv1 在 5h、④ 在 7h、
+实测（`tools/infinity-sim.mjs --hours=14`，该工具已归档见 `docs/archive/`；下列读数为 R 退休前）：②③ 在 2h/3.5h 买到、①Lv1 在 5h、④ 在 7h、
 起点跃迁 I~III + 速率解放 I 在 8.5h（打破无限之后）、起点跃迁 IV + 速率解放 II/III 在 11.5h。
 **打破无限：约 8.4 小时 / 5 次无限**（升级前的 9.7h/7 次 → ×3 的 ① 让 ④ 的收入翻倍的效果）。
 
@@ -25,9 +25,13 @@
 
 ## 0. 先把这段曲线的形状钉死（实测数据）
 
-> **改参数只跑数学模型**：`node tools/pace-model.mjs`（形状对照 / 起点与速率阶梯 / 到打破无限的时间），
-> `--sweep` 给 R₀ × D 矩阵，`--check` 是 6 条与沙盒实测对齐的定点断言（0.9% / 4.7% / 0.4%）。
-> 只有数学模型说不清的问题（例如多层反馈环）才回去跑 `infinity-sim.mjs`。
+> **改参数只跑数学模型**：已归档的 `tools/pace-model.mjs`（快照 `docs/archive/pace-model.mjs.txt`；
+> 形状对照 / 起点与速率阶梯 / 到打破无限的时间），`--sweep` 给 R₀ × D 矩阵。
+> 现在改由 `stage-timing.mjs`（真引擎时长表）与 `infinity-ladder-lab.mjs`（∞ 层经济表）承担。
+>
+> ⚠️ **本节（§0）是按 R 机制写的，R 已在 0.6.13 退休** —— 下面的 `R` / `growthRateMax` 数字
+> **只作历史备查**，现行机制是「粒子时变增幅 `b`（`DE_SPAN.b0` / `bMax`）+ 跨度幂 `k`」，
+> 见 `docs/R-REPLACEMENT.md` 与 `tools/quantum-particle-lab.mjs` / `tools/de-span-lab.mjs`。
 
 | 事实 | 数据 | 来源 |
 |---|---|---|
@@ -160,8 +164,8 @@
 `INFINITY_UPGRADES.ipTime.capSeconds = 1800`（30 分钟）。
 `IP/小时 = 60 × 3^① × min(T,1800)/T`：单次 ≤30 分钟吃满，100 分钟只拿 30%。
 沙盒实测代价很小（打破无限 4.1h → 4.8h），但它让"速度"有了意义。
-数值不敏感 —— 想改就改 `capSeconds`，然后跑 `npm run pace` 复算（模型会吃这个常数，
-`--check` 里有断言防脱节）。
+数值不敏感 —— 想改就改 `capSeconds`，然后跑 `tools/stage-timing.mjs --check` 复算
+（`--check` 里有断言防脱节）。
 
 **并且它是"每秒实时进账"的**（对齐 AD 的 `ipGen`）：总量公式不变，只是拆成每帧发。
 - 好处：挂机回来点已经在账上（不必等大坍缩），"单次 30 分钟"变成屏幕上的实时数字；
@@ -224,9 +228,10 @@ k=1.002 时 1000 轮就把 log10 乘 7.4 倍；k=1.01 时 ×20959。
 
 ## 5. 实现时的硬约束（本项目已有自检会拦）
 
-- 改 `R` 上限 → 必须重跑 `tools/headless.mjs`（S 判据）与 `tools/infinity-sim.mjs`（节奏）；
+- 改爬升速率旋钮（现为 `b` / 跨度幂 `k`；原 `R` 上限）→ 必须重跑 `tools/headless.mjs`（S 判据）
+  与 `tools/stage-timing.mjs --check`（节奏）；
 - **加"加速"类升级前，先跑 `tools/base-vs-quantum.mjs`** 确认它打的是真杠杆（R 或距离），
   而不是产率（见第 4 节的实测表）；
 - 改 `resetForCollapse` 的起始物质 → **`tools/consistency.mjs` 的速率一致性必须仍然通过**（显示 == 实际）；
 - 任何新升级的效果文本必须从公式推导（`infinityUpgradeEffect()` 那种写法），**不许手写字符串**；
-- 每加一条，都要在 `tools/infinity-sim.mjs --check` 里补一条定点断言。
+- 每加一条，都要在 `tools/stage-timing.mjs --check` 或 `tools/infinity-ladder-lab.mjs --check` 里补一条定点断言。

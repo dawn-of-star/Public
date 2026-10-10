@@ -1,6 +1,6 @@
 {
   "name": "kongxiang-incremental",
-  "version": "0.6.5",
+  "version": "0.6.17",
   "private": true,
   "description": "空想增量 —— 网页增量游戏（原生 ES 模块 + break_eternity.js，零构建）",
   "type": "module",
@@ -15,10 +15,6 @@
     "smoke:electron": "electron --no-sandbox tools/smoke-electron.cjs",
     "check:web": "node tools/check-web-bundle.cjs",
     "test": "node tools/run-all.mjs",
-    "sim:infinity": "node tools/infinity-sim.mjs",
-    "sim:infinity:check": "node tools/infinity-sim.mjs --check",
-    "pace": "node tools/pace-model.mjs",
-    "pace:check": "node tools/pace-model.mjs --check",
     "dist": "electron-builder --win --x64 --publish never",
     "dist:dir": "electron-builder --win --x64 --dir --publish never"
   },

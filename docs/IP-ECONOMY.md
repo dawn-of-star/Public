@@ -10,7 +10,15 @@
 > 档位定义（用户拍板）：**24 档 × 每次大坍缩 ≈ 1 小时 = 24 小时**，档位推进 = **大坍缩次数**。
 > 相关工具：[`tools/ip-economy-lab.mjs`](../tools/ip-economy-lab.mjs)（IP 阶梯）·
 > [`tools/crunch-speed-lab.mjs`](../tools/crunch-speed-lab.mjs)（每次大坍缩耗时）·
-> [`tools/coinage-lab.mjs`](../tools/coinage-lab.mjs)（**铸币与软上限的定点自检**）
+> ~~`tools/coinage-lab.mjs`（**铸币与软上限的定点自检**）~~ → **该工具已删**（见下方警示）
+
+> [!WARNING]
+> **本文档部分内容已过期。** 铸币（coinage）系统已在 0.7.0 那批改动里**整体删除** ——
+> `config.js` 里已无 `COINAGE` / `coinageMult` / `coinageAffordableIn`，
+> 定点自检工具 `tools/coinage-lab.mjs` 也随之删除（快照见 `docs/archive/`）。
+> 下文凡涉及**铸币等级 / 闸门 / 铸币软上限**的段落与数字（§4 的铸币部分、§5 的 coinage 断言）
+> **均已失效，仅作历史记录**。仍然有效的是：档位里程碑（`TIER_MILESTONES`）、
+> 坍缩加速器（`CRUNCH_ACCEL`）、`IP_DOUBLE_SOFT_CAP`、`ZPE_ENGINE.costSegments`。
 
 ---
 

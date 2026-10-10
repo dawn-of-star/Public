@@ -2,10 +2,10 @@
 
 网页增量游戏。原生 ES 模块 + `break_eternity.js`，**零构建、零 npm install**。
 
-当前版本：**0.6.5**
+当前版本：**0.6.17**（0.6.5 之后的所有未发布改动都合在这个版本号里）
 
 > **改完东西只想确认没搞坏？** 跑 `npm test`（或 `node tools/run-all.mjs`）——
-> 一次跑完 22 个自检脚本，只把失败细节打出来。约 4 分钟。
+> 一次跑完 47 个自检脚本，只把失败细节打出来。约 4 分钟。
 > 不知道该改哪个文件？看下面[「想改一个数值」](#想改一个数值)那张表。
 
 ### 维护约定（改机制时必须同步的三处）
@@ -42,7 +42,7 @@
 | 你想干嘛 | 用什么 | 需要装什么 |
 |---|---|---|
 | **点开就玩（最省事）** | **https://dawn-of-star.github.io/Public/** | 只需要浏览器 |
-| **下载到本地玩** | Release 里的 `KongxiangIncremental-0.6.5-win-x64.exe` | **什么都不用装**，双击即玩 |
+| **下载到本地玩** | Release 里的 `KongxiangIncremental-0.6.17-win-x64.exe` | **什么都不用装**，双击即玩 |
 | 在本机改着玩 | `node serve.mjs` → http://127.0.0.1:8321/ | Node.js |
 | 改代码 / 自己打包 | 见下面「打包成 exe」 | Node.js + 首次 `npm install` |
 
@@ -85,14 +85,19 @@ test-034/
 ├── index.html                   ★ 唯一入口（AMOLED，走 src/）
 ├── css/amoled.css               AMOLED 主题（配色取自 Antimatter Dimensions）
 ├── serve.mjs                    零依赖静态服务器（浏览器开发用）
+├── CHANGELOG.md                 ★ 版本历史（把「版本惯性」写成明文：一个功能批次跳一位小数）
 ├── package.json                 版本号 + 依赖 + 打包配置（build 字段）
 ├── .npmrc                       Electron 下载源换成国内镜像
 ├── .gitignore / .gitattributes  node_modules、release、换行符与语言统计
 ├── docs/                        ★ 设计文档（不参与打包与发布）
 │   ├── INFINITY-UPGRADES.md     ∞ 层升级清单（含 AD 原版逐条对照）
 │   ├── ZPE-ENGINE.md            ZPE 引擎（已实现 · 虚空科技第二个子页 · 含极强软上限）
-│   ├── IP-ECONOMY.md            无限点 → 永恒（24 小时档 · 各机制"省多少小时"的表）
-│   └── NEKO.md                  neko（草稿：梦想系统的自动化扩展）
+│   ├── IP-ECONOMY.md            无限点 → 永恒（24 小时档 · 各机制提速表）
+│   ├── R-REPLACEMENT.md         ★ R 退役方案底图（暗能量跨度层 + 量子提供幂 k）
+│   ├── QUANTUM-MILESTONES.md     ★ 量子里程碑草案（7 条；承担阶梯加速）
+│   ├── ZONES.md                 ★ 乘区总表（改乘区前的底图：11 格 / 50 词条 / 现状观察）
+│   ├── PROGRESSION.md           ★ 主流程设计（层间门槛/重置关系 + 实测时长 + 已知缺口 G1~G7）
+│   └── NEKO.md                  ★ neko 接入说明（待办：等对方回问题后做最小可接集）
 ├── electron/
 │   ├── main.cjs                 Electron 主进程：开窗口 + 菜单 + 单实例
 │   └── static-protocol.cjs      ★ 注册 app:// 协议，把静态文件当 HTTP 伺服
@@ -113,14 +118,14 @@ test-034/
 │   ├── smoke-electron.cjs       自检：真起 Electron 加载页面（需 npm install）
 │   ├── inspect-asar.cjs         自检：列出放进 exe 的文件清单（需打包产物）
 │   ├── headless.mjs             无头模拟 + S 判据自检
-│   ├── infinity-sim.mjs         ∞ 层（无限升级）的定点自检 + 会玩的玩家模拟
-│   ├── pace-model.mjs           ★ 节奏**数学模型**（解析式算时间，不跑游戏）
+│   ├── quantum-particle-lab.mjs ★ 粒子时变增幅（`b`）—— 取代 R 的那根杠杆
+│   ├── de-span-lab.mjs          ★ 暗能量跨度层（`k` / `DE₀` / a(DE)）模型
 │   ├── base-vs-quantum.mjs      ★ 量「基础产率 vs 量子项」——判断某个加速升级有没有用
 │   ├── zpe-engine-lab.mjs       ★ ZPE 引擎机制（打破无限后）的杠杆实测与 a<1 红线
 │   ├── ip-economy-lab.mjs       ★ 无限点经济模型（到 1e308.25 要什么；档位阶梯 / --fit / --sweep）
 │   ├── crunch-speed-lab.mjs     ★ 一次大坍缩要爬多久 + 各机制"省多少小时"（24h 档的提速表）
 │   ├── eternity-lab.mjs         永恒层公式（照 AD 抄）与「没有强制触发」的源码守卫
-│   ├── coinage-lab.mjs          ★ IP 侧机制自检（铸币闸门 / 三种软上限 / 坍缩加速器 / 档位里程碑）
+│   ├── infinity-ladder-lab.mjs  ★ ∞ 层经济表（128 IP 要几次大坍缩 / 破∞总时长）
 │   ├── stage-timing.mjs         ★★ 全阶段成长时长表（**跑真引擎**，含节奏缺口断言 + 里程碑快照）
 │   ├── pacing-reference.mjs     ★★ 以 AD 世界记录为标尺的节奏对照（目标 = WR × 1.25/×1.5）
 │   └── …                        其余曲线/审计脚本
@@ -155,8 +160,8 @@ npm run dist         # 产出 release/ 下的便携版 exe + zip
 
 | 文件 | 说明 |
 |---|---|
-| `release/KongxiangIncremental-0.6.5-win-x64.exe` | **给玩家的推荐版本**。单个自解压 exe，双击即玩，卸载就是删文件 |
-| `release/KongxiangIncremental-0.6.5-win-x64.zip` | 解压即用的绿色目录。部分杀软会误报自解压包，备一个这个 |
+| `release/KongxiangIncremental-0.6.17-win-x64.exe` | **给玩家的推荐版本**。单个自解压 exe，双击即玩，卸载就是删文件 |
+| `release/KongxiangIncremental-0.6.17-win-x64.zip` | 解压即用的绿色目录。部分杀软会误报自解压包，备一个这个 |
 
 想快速验证打包有没有问题，用 `npm run dist:dir`（只出 `release/win-unpacked/`，几十秒）。
 
@@ -215,7 +220,7 @@ Win10 1809+ / Win11（x64）双击就能跑。发给不特定的人玩，这个�
 ```bash
 git init
 git add .
-git commit -m "chore: 空想增量 0.5.1，加入 Electron 打包与自动构建"
+git commit -m "chore: 空想增量 0.6.17，加入 Electron 打包与自动构建"
 git branch -M main
 git remote add origin https://github.com/<你的用户名>/<仓库名>.git
 git push -u origin main
@@ -227,8 +232,8 @@ git push -u origin main
 
 ```bash
 # 先把 package.json 的 version 和 tag 对齐
-git tag v0.5.1
-git push origin v0.5.1
+git tag v0.6.17
+git push origin v0.6.17
 ```
 
 推上去之后 GitHub Actions 会自动：装依赖 → 打包 exe → 创建 Release 把两个文件挂上去。
@@ -252,7 +257,7 @@ git push origin v0.5.1
 ### 为什么不能直接把整个仓库发布出去
 
 发布前要先挑文件。游戏真正需要的只有 4 个：`index.html`、`css/`、`src/`、`dist/`。
-`legacy/`（0.3.4 原稿）、`tools/`（20 个开发脚本）、`electron/`、`build/` 都不该公开可访问。
+`legacy/`（0.3.4 原稿）、`tools/`（47 个开发脚本）、`electron/`、`build/` 都不该公开可访问。
 
 `tools/check-web-bundle.cjs` 负责这件事，它做两步：
 
@@ -349,17 +354,39 @@ JS 的 `Number` 上限是 1.8e308，`Math.pow(4, 512)` 就会溢出成 `Infinity
 
 | 你想改的东西 | 改哪里（唯一数据源） | 改完先跑这个 |
 |---|---|---|
-| 爬升快慢 / 曲线形状（e25→e308） | `QUANTUM.growthRateMax` + `CLIMB` | `npm run pace` → `pace:check` |
-| **想加"加速无限"的升级** | 先跑 `tools/base-vs-quantum.mjs` 确认它打的是真杠杆 | `tools/pace-model.mjs` 算收益 |
-| 单次无限的收益上限（④ 的 30 分钟） | `INFINITY_UPGRADES.ipTime.capSeconds` | `npm run sim:infinity:check` |
+| 爬升快慢 / 曲线形状（e25→e308） | `DE_SPAN`（跨度幂 k / a(DE)）+ 粒子增幅 `b` | `tools/de-span-lab.mjs --check`、`tools/quantum-particle-lab.mjs` |
+| **想加"加速无限"的升级** | 先跑 `tools/base-vs-quantum.mjs` 确认它打的是真杠杆 | `tools/infinity-ladder-lab.mjs` 算收益 |
+| 单次无限的收益上限（④ 的 30 分钟） | `INFINITY_UPGRADES.ipTime.capSeconds` | `tools/stage-timing.mjs --check` |
 | 量子门槛 / 捕获节奏 | `QUANTUM.zpeBaseCost` `zpeCostGrowth` `zpeCostExtraNerf` | `tools/quantum-curve.mjs`、`quantum-growth-tune.mjs` |
 | 暗能量与惩罚 | `DE_PENALTY`、`DE_UPGRADES` | `tools/de-tune.mjs`、`de-milestone-model.mjs` |
-| 无限门槛 / 无限升级 | `BREAK_INFINITY`、`INFINITY_UPGRADES` | `npm run sim:infinity:check` |
-| 打破无限之后的软上限 | `OVERLOAD` | `tools/infinity-sim.mjs --check` |
+| 无限门槛 / 无限升级 | `BREAK_INFINITY`、`INFINITY_UPGRADES` | `tools/stage-timing.mjs --check`、`tools/infinity-ladder-lab.mjs` |
+| 打破无限之后的软上限 | `OVERLOAD` | `tools/stage-timing.mjs --check`、`tools/cap-monotonic-lab.mjs` |
 | 价格曲线（含分段） | `REPEATABLE`、`VOID_UPGRADES`、`PIECEWISE` | `tools/audit.mjs` |
 | 乘区颜色 / 词条 / 图例 | `ZONES`、`ZONE_OF` | `tools/dom-smoke.mjs`（乘区登记守卫） |
-| ZPE 引擎（打破无限后） | `ZPE_ENGINE`（解锁 10 无限点 / 三条机制的阈值都在这里） | `tools/zpe-engine-lab.mjs --check`（a<1 红线） |
+| ZPE 引擎（打破无限后） | `ZPE_ENGINE`（解锁 = **1 次大坍缩**里程碑，不花无限点；三条机制的阈值都在这里） | `tools/zpe-engine-lab.mjs --check`（a<1 红线） |
 | 界面文字（卡片描述） | `config.js` 各条目的 `desc`（要**从公式算**） | `tools/dom-smoke.mjs`、`consistency.mjs` |
+| **过载**（打破无限后的软上限） | `OVERLOAD`（`halvingOrders` / `stepOrders` / `tierShift` / `crunchBelow`） | `tools/overload-lab.mjs`（零回归 + **收手阈值可达**）、`tools/infinity-ladder-lab.mjs` |
+| **量子捕获门槛**（累进档位） | `QUANTUM.captureTierFactor` | `tools/quantum-tier-lab.mjs` |
+| **永恒里程碑**（8 条，按永恒次数解锁） | `ETERNITY_MILESTONES`（`pending` 标记未实装项） | `tools/eternity-lab.mjs --check`（18 条：EP 公式 6 + 里程碑 12） |
+| **IP 阶梯的通道分工**（① / IC / 深度 / em5 各扛多少阶） | `INFINITY_CHALLENGES`、`IP_DOUBLE_SOFT_CAP` | `tools/ic-ladder-lab.mjs`（三张表） |
+| **ZPE 引擎的饱和拐点**（`k` 能不能长起来） | `MATTER_B_KNEE`、`ZPE_ENGINE.baseCostIp` | `tools/engine-knee-lab.mjs` |
+| **引擎价格形状**（多项式 vs 指数） | `ZPE_ENGINE.baseCostIp` | `tools/engine-cost-form.mjs`、`tools/engine-tier-cost-lab.mjs` |
+| **AD 星系曲线的真实形状**（照源码复算） | —（只读 AD 源码） | `tools/ad-galaxy-shape-lab.mjs` |
+| **引擎 5 条机制各自的内部终点** | `addPerLevel`、`prodLevelCoeff`、`multLevelCoeff`、`engineLevelCoeff`、`MATTER_B_KNEE` | `tools/engine-mechanism-lab.mjs` |
+| **按钮能不能点**（接线 / 禁用态 / 点击后的状态变化） | `src/ui.js` 的绑定 + `src/main.js` 的 handlers | `tools/dom-smoke.mjs`（**真的派发 click** 并断言状态变化） |
+| **未定义标识符**（import 漏了、名字写错） | 各模块的 `import` 清单 | `tools/undefined-ident-ref.mjs` |
+
+> ⚠️ **为什么后两条必须存在**（2025 踩的坑，用户报「点大坍缩和购买 zpe 引擎目前无效」）：
+> `main.js` 里 4 个函数（`doBigCrunch` / `doEternity` / `unlockZpeEngine` / `buyZpeEngineLevel`）
+> **被调用但从未 import** ⇒ 每次点击抛 `ReferenceError`，表现就是"点了没反应" ✗
+>
+> 而这两个问题**原来的守卫一个都抓不到**：
+> · `node --check` 只查**语法** —— 未定义标识符是**运行时**错误，直接放行；
+> · `dom-smoke` 原来的 `addEventListener` 是**空函数** —— 点了什么也不会发生，自然测不出。
+>
+> ⇒ 修法：① `dom-smoke` 的替身**记下监听器并真的派发 `click()`**；
+> ② 新增 `undefined-ident-ref.mjs` 扫全 `src/` 的"调用了但没 import/声明"。
+> 两者都已进 `npm test` 批跑 ✓
 
 ---
 
@@ -420,8 +447,8 @@ JS 的 `Number` 上限是 1.8e308，`Math.pow(4, 512)` 就会溢出成 `Infinity
 - "单次 30 分钟"从结算时才算，变成卡片上的**实时数字**（超时还会提示"该大坍缩了"）。
 - 大坍缩**只发深度部分**，耗时部分早已实时发完（否则就是重复发放，有断言守着）。
 
-实测（`node tools/infinity-sim.mjs --hours=16`）：**约 10.4 小时 / 6 次无限**买下「打破无限」；
-数学模型（`npm run pace`）算出来是 **10.5 小时 / 6 次**，两者一致。
+实测（`node tools/stage-timing.mjs`，跑真引擎）：**约 10.4 小时 / 6 次无限**买下「打破无限」；
+∞ 层经济表（`tools/infinity-ladder-lab.mjs`）算出来是 **10.5 小时 / 6 次**，两者一致。
 
 ### 为什么要「起点跃迁」和「速率解放」
 
@@ -451,7 +478,8 @@ R_eff = R(q) · 2^(−(L − 25)/100)        （L ≤ 25 时恒为 1，所以 e2
 
 **总时长几乎不变，但形状从直线变成了 log**：前期快 2.7 倍、末期慢 2 倍。
 `QUANTUM.growthRateMax` 必须和 `CLIMB.halvingOrders` 一起调（只改一个总时长会漂），
-参数表与断言见 [`tools/pace-model.mjs`](tools/pace-model.mjs)（`npm run pace` / `npm run pace:check`）。
+参数表与断言见 [`tools/quantum-particle-lab.mjs`](tools/quantum-particle-lab.mjs)
+（`node tools/quantum-particle-lab.mjs [--check]`、`tools/de-span-lab.mjs`）。
 
 ### 过载（打破无限之后的软上限）
 
@@ -459,16 +487,35 @@ R_eff = R(q) · 2^(−(L − 25)/100)        （L ≤ 25 时恒为 1，所以 e2
 **打破之后不再有硬顶**，改走过载：
 
 ```
-拐点 = 308.2547 + log10(1.01) × 量子数           ← 量子推迟拐点（每量子 +1%）
-超出后：d(log10 M)/dt = R(q) · 2^(−(L − 拐点)/10)  ← 每 10 阶速率减半
+拐点 = 308.2547 + log10(1.01) × 量子数              ← 量子推迟拐点（每量子 +1%）
+       usedOver = 超出 × (1 + tierShift × ⌊超出/stepOrders⌋)
+       d(log10 M)/dt = R(q) · factor^(−usedOver / halvingOrders)
 ```
+
+**2025 改成 AD 复制器口径**（用户裁定）：AD 是「每超一个固定 OoM 步长 ⇒ 该档难度 ×固定因子」
+（`src/core/replicanti.js` 的 `scaleFactor ^ increases`）。我们落地为：
+
+| 旋钮 | 值 | 说明 |
+|---|---|---|
+| `factor` | **1.2** | AD 的 `scaleFactor`（原为 2） |
+| `halvingOrders` | **2.63** | AD 的 `scaleLog10` 角色，**已按自洽解重标** |
+| `stepOrders` | 10 | 「一档」= 多少阶 |
+| `tierShift` | **0.25** | 每跨一档，该档有效超出多算 25% 档长 |
+| `crunchBelow` | 0.05 | 收手阈值（`shouldCrunch()`，**单一来源**） |
+
+> ⚠️ **`halvingOrders` 不能连步长一起照抄 AD 的 308.25** ——
+> 标定式（已固化成代码，见 `tools/overload-calib-lab.mjs`）：
+> `step = D × ln(factor) / ln(1/crunchBelow)`，`D` = 要保住的收手深度 43.22 阶。
+> 照抄 AD ⇒ 收手深度 **5065 阶**（旧口径只有 43 阶），而 IP/次 ∝ `10^(c·深度)`
+> ⇒ 整条阶梯的时长会被彻底改写 ✗
+> AD 能那样定，是因为它的复制器另有推进手段（星系升级）；我们只有物质一条线。
 
 为什么必须是"软"的：硬顶会让「再深一点」变成不可能，于是任何"用无限点买的东西去抬上限"的设计
 都会掉进 `cap = f(IP(cap))` 这个自指闭环 —— 要么卡死、要么刀刃爆炸（推导见
 [`docs/INFINITY-UPGRADES.md`](docs/INFINITY-UPGRADES.md)）。
 软上限把"能不能过去"换成"过去得有多慢"，进度永远有一点。
 
-实测（`node tools/infinity-sim.mjs`）：打破无限后物质能越过旧硬顶（12 小时到 `5.85e326`，+18 阶），
+实测（`node tools/stage-timing.mjs`）：打破无限后物质能越过旧硬顶（12 小时到 `5.85e326`，+18 阶），
 而**前置段完全不变**（仍是硬顶 + 强制坍缩；6 次无限、约 9.7 小时买下「打破无限」）。
 
 ### 下一步要加的无限升级

@@ -1,0 +1,202 @@
+/**
+ * src/ui-wiring.js —— 「接线」面板（自包含  不动现有 index.html 与渲染逻辑 ）
+ *
+ * 规格：`docs/WIRING-NETWORK.md`（§6 UI 方案 / §10 教学）
+ * 清单：`docs/WIRING-STEP1-PLAN.md`（第 6~7 步）
+ *
+ * ── AMOLED 风格（项目主风格，必须遵守 ）──
+ *   · 细线 + `<h2>` 小节标题 + `.detail` 键值行 + `.stack` 列表 + `.badge` 徽标
+ *   · **无图标、无 emoji** （`dom-smoke` 的守卫区间 U+2600–U+27BF 连 `` 都拦 ）
+ *   · **不画图**  —— 用「接线条目表」表达（规格 §6 ）
+ *   · 卡片**只建一次** 、每帧只改文本与 class （踩过 hover 闪烁的坑 ）
+ */
+import {
+  WIRING, capacityOf, edgeCost, edgesOf, freeUsedOf, globalRingS, networkMultiplier,
+  eternityGate, eternityPointsGain, paidEdgeCount, previewEdge, remainingCapacity, sVolatility, tryBuyEdge, tryRemoveEdgeWithRefund,
+  wiringActive, solveWiringRing,
+} from "./wiring.js";
+import { ZONES } from "./config.js";
+import { matterRate } from "./formulas.js";
+
+const FALLBACK_ZONES = ["matter", "particle", "entropy", "zpe", "quantum", "dm", "dream", "ip"];
+const ZONE_LABEL = {
+  matter: "物质", particle: "粒子", entropy: "熵", zpe: "ZPE", quantum: "量子",
+  dm: "暗能量", dream: "梦想", ip: "无限点", void: "虚空",
+};
+const label = (z) => ZONE_LABEL[z] ?? z;
+const zoneList = () => {
+  const keys = Object.keys(ZONES ?? {});
+  return keys.length ? keys : FALLBACK_ZONES;
+};
+const $ = (id) => document.getElementById(id);
+const fmt = (x, n = 2) => (Number.isFinite(x) ? x.toFixed(n) : "—");
+
+let built = false;
+let selA = null, selB = null, previewText = "—";
+
+/** 建面板（**只建一次** ） */
+export function buildWiringUI() {
+  if (built) return;
+  const anchor = $("zpe-engine-content");
+  const parent = anchor?.parentElement;
+  if (!parent) return;
+
+  const h2 = document.createElement("h2");
+  h2.style.marginTop = "16px";
+  h2.innerHTML = `接线 <span class="badge" id="wiring-badge">未开启</span>`;
+
+  const locked = document.createElement("div");
+  locked.id = "wiring-locked";
+  locked.className = "locked";
+  locked.innerHTML =
+    `打破无限后开启「接线」<div class="cond"><div>把乘区当节点、把加成当边：接出一条能自我加速但不越线的环</div></div>`;
+
+  const content = document.createElement("div");
+  content.id = "wiring-content";
+  content.hidden = true;
+  content.innerHTML = `
+    <div class="detail">
+      <div><span>环增益 S</span><b id="wiring-s" class="glow-accent">0.000</b></div>
+      <div><span>近 60 秒波动</span><b id="wiring-svol" class="glow-dm">±0.000</b></div>
+      <div><span>网络收益</span><b id="wiring-m" class="glow-gold">×1.00</b></div>
+      <div><span>已接边数</span><b id="wiring-count">0 / 0</b></div>
+    </div>
+    <div class="bar" style="margin:10px 0 12px"><i id="wiring-bar" style="background:linear-gradient(90deg,#5a0d08,#ff3b30)"></i><span id="wiring-bar-text">0%</span></div>
+    <div class="stack" id="wiring-list"></div>
+    <p class="note" id="wiring-goals">目标：接出一个环 ｜ 让 S ≥ 0.5 ｜ 覆盖 3 个不同乘区</p>
+    <p class="rule" id="wiring-preview">预演：先选两端，再点「预演」——不花费、不落地，直接看 ΔS 与收益变化。</p>
+    <p class="note" id="wiring-eternity">—</p>
+    <p class="note">红线：S ≥ 1 会让环失控 ⇒ 本轮接线全部清零（冷却 120 秒）。浅接没事，贪多才会崩。</p>
+  `;
+
+  parent.appendChild(h2);
+  parent.appendChild(locked);
+  parent.appendChild(content);
+  built = true;
+}
+
+/** 每帧更新（**只改文本/class**  不重建 DOM ） */
+export function renderWiring(state) {
+  if (!built) buildWiringUI();
+  const badge = $("wiring-badge");
+  const locked = $("wiring-locked");
+  const content = $("wiring-content");
+  if (!badge || !locked || !content) return;
+
+  const on = wiringActive(state);
+  badge.textContent = on ? "已开启" : "未开启";
+  locked.hidden = on;
+  content.hidden = !on;
+  if (!on) return;
+
+  const S = solveWiringRing(state).S;
+  const M = networkMultiplier(state);
+  const vol = sVolatility(state);
+  $("wiring-s").textContent = fmt(S, 4);
+  $("wiring-svol").textContent = `±${fmt(vol.span, 4)}`;
+  $("wiring-m").textContent = `×${fmt(M, 2)}`;
+  const total = edgesOf(state).length;
+  $("wiring-count").textContent = `${total} 条（免费 ${freeUsedOf(state)} / ${WIRING.tutorial.length}）`;
+
+  // S 条：0 → 1 映射；≥1 时整条变红（AMOLED：只用颜色 + 细线，不用图标 ）
+  const pct = Math.max(0, Math.min(1, S)) * 100;
+  const bar = $("wiring-bar");
+  bar.style.width = `${pct}%`;
+  bar.style.background = S >= 0.95
+    ? "linear-gradient(90deg,#7a0f08,#ff3b30)"
+    : "linear-gradient(90deg,#2b3a55,#4f7fd0)";
+  $("wiring-bar-text").textContent = `${pct.toFixed(1)}% ｜ 余量 ${fmt(Math.max(0, 1 - S), 4)}`;
+
+  // 目标（教学 §10.3 的三个小目标  与永恒门槛同源 ）
+  const zones = new Set(edgesOf(state).map((e) => e.from).concat(edgesOf(state).map((e) => e.to)));
+  const hasRing = edgesOf(state).some((a) => edgesOf(state).some((b) => b !== a && b.from === a.to && b.to === a.from));
+  $("wiring-goals").innerHTML =
+    `目标：<b>${hasRing ? "已接出环" : "接出一个环"}</b> ｜ S ≥ 0.5 ${S >= 0.5 ? "（已达成）" : ""} ｜ ` +
+    `覆盖 3 个乘区（当前 ${zones.size} 个）`;
+
+  //  第二步 (c)：永恒门槛四条 + 精度 + 预计永恒点（**只显示，不改任何行为** ）
+  //    与引擎同源：checks 来自 eternityGate()，EP 来自 eternityPointsGain() ⇒ 显示即实发
+  {
+    const gate = eternityGate(state);
+    const p = gate.precision;
+    const ep = eternityPointsGain(state);
+    const open = p.inside ? "" : "（本轮 S 不在区间内）";
+    $("wiring-eternity").innerHTML =
+      `<b>永恒门槛</b>（第 ${p.k} 次 → 第 ${p.k + 1} 次）：S 需落在 ` +
+      `<b>[${p.lo.toFixed(4)}, ${p.hi.toFixed(6)}]</b>${open}<br>` +
+      gate.checks.map((c) => `${c.ok ? "已达成" : "待完成"}：${c.label}${c.detail ? `（${c.detail}）` : ""}`).join(" ｜ ") +
+      `<br>精度 t = <b>${p.t.toFixed(3)}</b> ⇒ 永恒点 ×${(1 + p.t * p.t * (WIRING.precisionMax - 1)).toFixed(2)}` +
+      `｜预计 EP ≈ <b>${ep.toExponential(3)}</b> ｜门槛${gate.ok ? "已满足" : "未满足"}`;
+  }
+
+  // 列表：**只重建当边数变化时**（否则每帧重建 ⇒ hover 闪烁 ）
+  const list = $("wiring-list");
+  const want = total + 1;
+  if (Number(list.dataset.builtFor ?? -1) !== want) {
+    buildList(state);
+    list.dataset.builtFor = String(want);
+  }
+}
+
+/** 接线列表（边行 + 候选行  只在边数变化时重建 ） */
+function buildList(state) {
+  const list = $("wiring-list");
+  const mps = matterRate(state).max(0);   // Decimal-first: keep it as Decimal (never toNumber)
+  list.innerHTML = "";
+
+  edgesOf(state).forEach((e, i) => {
+    const row = document.createElement("div");
+    row.className = "btn zone zone-zpe";
+    row.style.cursor = "default";
+    row.innerHTML =
+      `<div class="btn-row"><span class="btn-name">${label(e.from)} → ${label(e.to)}</span>` +
+      `<span class="btn-lv">×${e.weight.toFixed(2)}</span></div>` +
+      `<div class="btn-desc">免费额度内：${i < freeUsedOf(state) ? "是" : "否"} ｜ 该节点容量 ${capacityOf(state, e.to)}</div>`;
+    const del = document.createElement("button");
+    del.className = "btn-max";
+    del.textContent = "拆线";
+    del.onclick = () => { tryRemoveEdgeWithRefund(state, i, mps); list.dataset.builtFor = "-1"; };
+    row.appendChild(del);
+    list.appendChild(row);
+  });
+
+  // 候选行：选两端 + 预演 + 接线 （列表式，不画图  §6）
+  //  教学脚本机（规格 §10.3 ）：前两条边**锁死**在预订端点上，接完才解锁自由选择 
+  const step = state.wiring?.tutorialStep ?? 0;
+  const fixedT = step < WIRING.tutorial.length ? WIRING.tutorial[step] : null;
+  if (fixedT) { selA = fixedT.from; selB = fixedT.to; }
+  const zones = zoneList();
+  const opts = (sel) => zones.map((z) => `<option value="${z}"${z === sel ? " selected" : ""}>${label(z)}</option>`).join("");
+  const cand = document.createElement("div");
+  cand.className = "btn zone zone-zpe";
+  cand.style.cursor = "default";
+  cand.innerHTML =
+    `<div class="btn-row"><span class="btn-name">新增接线</span><span class="btn-lv">${fixedT ? "教学第 " + (step + 1) + " 条" : "第 " + (paidEdgeCount(state) + 1) + " 条付费"}</span></div>` +
+    `<div class="btn-desc">` +
+    `<select id="wiring-src" style="margin-right:6px"${fixedT ? " disabled" : ""}>${opts(selA ?? "matter")}</select>` +
+    `→ <select id="wiring-dst" style="margin-left:6px"${fixedT ? " disabled" : ""}>${opts(selB ?? "particle")}</select></div>` +
+    `<div class="btn-cost" id="wiring-cost">价格：${fmt(edgeCost(state, mps).toNumber())} 物质</div>` +
+    `<div class="btn-desc" id="wiring-preview-line">${previewText}</div>`;
+  const doPreview = document.createElement("button");
+  doPreview.className = "btn";
+  doPreview.textContent = "预演";
+  doPreview.onclick = () => {
+    selA = $("wiring-src").value; selB = $("wiring-dst").value;
+    const p = previewEdge(state, selA, selB, mps);
+    previewText = p.ok
+      ? `ΔS +${p.dS.toFixed(4)} ｜ 收益 ×${(p.M).toFixed(2)}（Δ×${p.dM.toFixed(3)}）｜ 回本 ${fmt(p.paybackSec, 0)} 秒`
+      : `不可接：${p.reason}`;
+    $("wiring-preview-line").textContent = previewText;
+  };
+  const doBuy = document.createElement("button");
+  doBuy.className = "btn-max";
+  doBuy.textContent = "接线";
+  doBuy.onclick = () => {
+    const r = tryBuyEdge(state, $("wiring-src").value, $("wiring-dst").value, mps);
+    previewText = r.ok ? (r.free ? "已接上（免费额度）" : "已接上（已扣物质）") : `失败：${r.reason}`;
+    list.dataset.builtFor = "-1";
+  };
+  cand.appendChild(doPreview);
+  cand.appendChild(doBuy);
+  list.appendChild(cand);
+}

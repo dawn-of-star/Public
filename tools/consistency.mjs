@@ -21,13 +21,21 @@
  */
 
 import Decimal from "../dist/break_eternity.esm.js";
-import { BASE, COLLAPSE, DE_MILESTONES, DE_UPGRADES, REPEATABLE, VOID_UPGRADES } from "../src/config.js";
+import { BASE, COLLAPSE, DE_MILESTONES, DE_UPGRADES, REPEATABLE, VOID_UPGRADES, ipDoubleMult,
+  // ★ 2025：① 的价格序列断言要用（用户裁定「首价 1 点、之后每级 ×10」）
+  ipDoublePriceAt, ipDoubleCost, ipDoubleAffordableIn, infinityUpgradeCost,
+  // ★★★ 2025：永恒升级「永恒增幅」断言要用（第三层设计稿 33~35 行）
+  epMultPriceAt, epMultAffordableIn, epMultFactor, eternityPointGain, ETERNITY } from "../src/config.js";
 import { newState } from "../src/state.js";
 import {
   conversion, darkEnergyRate, deUpgradeCost, entropyRate, globalMultiplier, globalMultiplierParts,
   matterRate, particleRate, repeatableCost, trapCost, zpeRate,
 } from "../src/formulas.js";
-import { breakInfinity, buyDeUpgrade, buyDreamUpgrade, buyRepeatable, buyTrap, buyVoidUpgrade, doBigCrunch, doClick, tick } from "../src/engine.js";
+import { breakInfinity, buyDeUpgrade, buyDreamUpgrade, buyRepeatable, buyTrap, buyVoidUpgrade, doBigCrunch, doClick, tick, infinityUpgradeEffect,
+  // ★ 2025：① 的"买满 == 逐级实买"断言要它
+  buyInfinityUpgrade,
+  // ★★★ 2025：永恒增幅的「买满 == 逐级」与「实得 EP」断言要它们
+  buyEpMult, doEternity } from "../src/engine.js";
 
 const D = (v) => new Decimal(v);
 const pad = (s, n) => String(s).padEnd(n);
@@ -111,9 +119,19 @@ for (const scen of ["常规", "dm4b 生效"]) {
     s.deMilestones.dm4b = scen === "dm4b 生效";
     const shown = fn(s).toNumber();
     const before = getter(s);
-    tick(s, DT);
+    // ★★ 2025 修（打点定位后）：**物质/粒子必须用更小的步长** ✗
+    //
+    //   为什么：引擎的物质增量是**闭式解** `ΔM = k·(P0·dt + c·dt²/2)`，
+    //     而 `matterRate()` 是**瞬时值** `k·P0` —— 两者的比是 `1 + c·dt/(2·P0)` ✗
+    //     在某些状态里"粒子每秒被替换 ~1e5 次"（`c/P0` 极大）⇒ 1 毫秒步长下
+    //     那个二阶项会**反超**一阶项 44 倍 ⇒ 断言误报 97.8% ✗（并被我误判成量子的问题 ✗）
+    //   修法：这两个量用 `dt = 1e-7`（二阶项占比 < 0.5% ✓），其余仍用 DT ✓
+    //   ⚠️ 这**不是**放宽标准：`matterRate` 的定义没错、引擎的闭式解也没错 ✗，
+    //      错的是"拿两个不同阶的东西比" ✗ —— 打点实测：`显示/(P0·k·过载·爬升) = 1.0000` ✓
+    const dtHere = (label === "物质" || label === "粒子") ? 1e-7 : DT;
+    tick(s, dtHere);
     const after = getter(s);
-    const actual = after.sub(before).div(DT).toNumber();
+    const actual = after.sub(before).div(dtHere).toNumber();
 
     const tol = label === "暗能量" ? 0.10 : 0.02;
     const err = rel(shown, actual);
@@ -236,8 +254,12 @@ for (const id of Object.keys(DE_UPGRADES)) {
     if (shownCost == null) return;
     const paid = b[key].sub(a[key]);
     const e = rel(shownCost.toNumber(), paid.toNumber());
-    if (e >= 1e-9) ok = false;
-    parts.push(`${label}:${e < 1e-9 ? "✅" : `❌${(e * 100).toFixed(2)}%`}`);
+    if (e >= 1e-3) ok = false;   // 与上面同一处容差（余额差里混了同步产出）
+    // ⚠️ 2025 修：容差从 `1e-9` 放到 `1e-3` —— 原因不是"放宽标准"，而是
+    //   `paid` 是**余额差**，而同一 tick 里该资源还在**继续生产** ✗
+    //   ⇒ 差值里天然混进了一点产出（实测相对误差 ~1e-5，显示成 0.00% ✗）
+    //   1e-3（0.1%）仍能抓住"显示与实收不是一个数"这类真问题 ✓
+    parts.push(`${label}:${e < 1e-3 ? "✅" : `❌${(e * 100).toFixed(2)}%`}`);
   };
   cmp("粒子", cost.particle, "pa");
   cmp("ZPE", cost.zpe, "zp");
@@ -434,6 +456,136 @@ console.log();
       ok,
       detail: `连买到 10 级，写日志的等级 = [${wrote.join(", ")}]（期望 [${expect.join(", ")}]）；` +
         `之后"买满"写了 ${bulkWrote} 条`,
+    };
+  });
+
+  // ★★ 2025 新增：**① 无限增幅的"显示 == 实发"必须成立**
+  //
+  //   现场：`ipDoubleMult()`（实发，`bigCrunchGain` 走它）曾是**线性** `1+0.10×等级`，
+  //     而显示侧（`engine.js` 的 `infinityUpgradeEffect`、`ui.js` 的收入明细）各写了一遍
+  //     `Decimal.pow(effectMult, 等级)` ⇒ **100 级时显示比实发大 1.2e29 倍** ✗
+  //   这是本项目最忌讳的一类 bug，成因是"同一条公式两处各写一遍"。
+  //   现在实发与显示共用 `ipDoubleMult()` ⇒ 本断言守住它（换形态也自动同步 ✓）。
+  check("① 无限增幅：显示 == 实发（唯一入口 ipDoubleMult）", () => {
+    const st = (L) => ({ ...newState(), ipDoubleLevel: L, infinityPoints: new Decimal(0) });
+    const rows = [0, 1, 5, 10, 30, 100, 500].map((L) => {
+      const actual = ipDoubleMult(st(L)).toString();
+      const shown = infinityUpgradeEffect(st(L), "ipDouble").mult.toString();
+      return { L, actual, shown, ok: actual === shown };
+    });
+    const badRows = rows.filter((r) => !r.ok);
+    return {
+      ok: badRows.length === 0,
+      detail: badRows.length === 0
+        ? `7 个等级全部一致（含 500 级 = ${rows[6].actual.slice(0, 12)}…）`
+        : `不一致：${badRows.map((r) => `L${r.L} 实${r.actual} vs 显${r.shown}`).join("｜")}`,
+    };
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2025 新增（用户裁定改了 ① 的首价序列之后必须守住的）
+  // ══════════════════════════════════════════════════════════
+  // 用户裁定：「无限增幅的初始价格不应该就是 1 无限点（购买时 1 级）么？
+  //            然后每 2 级为 10 无限点花费，3 级 100 点（以此类推）」
+  //   ⇒ 价格序列 = `1 → 1 → 10 → 100 → 1000 …`
+  //
+  // 为什么必须断言：这个序列**第 1 级是特例**（`10^(n−1)` 在 n=0 处是 0.1 而非 1）
+  //   ⇒ 任何"当纯等比处理"的闭式都会错 ✗（我在 `ipDoubleAffordableIn` 里**错了两次**：
+  //      先写 `/9` 后写 `/90`，又想用它反解 k）
+  //   ⇒ 守三件事：① 价格序列本身 ② `ipDoublePriceAt` / `ipDoubleCost` /
+  //      `infinityUpgradeCost` 三者同源 ③ **能买几级 == 逐级实买到买不起**
+  check("① 价格序列 = 1,1,10,100,1000…（用户裁定）", () => {
+    const want = [1, 1, 10, 100, 1000, 10000, 100000];
+    const got = want.map((_, n) => Number(ipDoublePriceAt(n)));
+    // ⚠️ `ipDoubleCost` / `infinityUpgradeCost` 收的是 **state**（读 `state.ipDoubleLevel`）
+    //   ⇒ 必须包成 Decimal，不能直接传 number（否则 `lv.toNumber is not a function` ✗）
+    const stAt = (n) => ({ ipDoubleLevel: new Decimal(n) });
+    const viaCost = want.map((_, n) => Number(ipDoubleCost(stAt(n))));
+    const viaIUC = want.map((_, n) => Number(infinityUpgradeCost(stAt(n), "ipDouble")));
+    const eq = (a, b) => a.every((v, i) => v === b[i]);
+    const ok = eq(got, want) && eq(viaCost, want) && eq(viaIUC, want);
+    return {
+      ok,
+      detail: ok
+        ? `序列 ${got.join(",")} ✓｜三个入口（PriceAt / Cost / infinityUpgradeCost）完全一致 ✓`
+        : `序列=${got.join(",")}（应 ${want.join(",")}）｜Cost=${viaCost.join(",")}｜IUC=${viaIUC.join(",")}`,
+    };
+  });
+
+  check("① 买满 == 逐级实买（含第 1 级特例的边界）", () => {
+    const pools = ["5", "100", "1e4", "1e6", "1e12", "1e29"];
+    const rows = pools.map((p) => {
+      const a = { ...newState(), brokenInfinity: true, infinityPoints: new Decimal(p) };
+      const pred = ipDoubleAffordableIn(0, a.infinityPoints);
+      const b = { ...newState(), brokenInfinity: true, infinityPoints: new Decimal(p) };
+      let real = 0;
+      while (buyInfinityUpgrade(b, "ipDouble").ok && real < 500) real++;
+      return { p, pred, real, ok: pred === real };
+    });
+    const badRows = rows.filter((r) => !r.ok);
+    return {
+      ok: badRows.length === 0,
+      detail: badRows.length === 0
+        ? `6 个池子全部一致（5 点 ⇒ ${rows[0].pred} 级、1e6 ⇒ ${rows[3].pred} 级）✓`
+        : `不一致：${badRows.map((r) => `${r.p} 预测${r.pred} vs 实买${r.real}`).join("｜")}`,
+    };
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2025 新增（第三层设计稿 33~35 行）：**永恒升级「永恒增幅」**
+  // ══════════════════════════════════════════════════════════
+  // 设计稿：「永恒升级面板：将最终获得的永恒点 *5（价格初始 1ep，每次购买后 *5）」
+  //   ⇒ 价格序列 = `1 → 5 → 25 → 125 …`｜效果 = `5^等级`
+  // 守三件事：① 价格序列**精确**（`Decimal.pow(5,2)` 会给 25.000000000000007 ✗）
+  //          ② 买满 == 逐级实买（闭式与实现同源）
+  //          ③ **永恒时实得 EP == 基础 × 倍率**（效果真的落在"最终获得的"上）
+  check("★ 永恒增幅：价格序列 = 1,5,25,125…（设计稿）且无浮点漂移", () => {
+    const want = [1, 5, 25, 125, 625, 3125, 15625];
+    const got = want.map((_, n) => Number(epMultPriceAt(n)));
+    const ok = got.every((v, i) => v === want[i]);
+    return {
+      ok,
+      detail: ok ? `序列 ${got.join(",")} ✓（精确整数，无漂移）`
+        : `序列=${got.join(",")}（应 ${want.join(",")}）`,
+    };
+  });
+
+  check("★ 永恒增幅：买满 == 逐级实买", () => {
+    const pools = ["1", "5", "100", "1e6", "1e12"];
+    const rows = pools.map((p) => {
+      const a = { ...newState(), eternityPoints: new Decimal(p) };
+      const pred = epMultAffordableIn(0, a.eternityPoints);
+      const b = { ...newState(), eternityPoints: new Decimal(p) };
+      let real = 0;
+      while (buyEpMult(b, 1) > 0 && real < 500) real++;
+      return { p, pred, real, ok: pred === real };
+    });
+    const badRows = rows.filter((r) => !r.ok);
+    return {
+      ok: badRows.length === 0,
+      detail: badRows.length === 0
+        ? `5 个池子全部一致（1e6 ⇒ ${rows[3].pred} 级）✓`
+        : `不一致：${badRows.map((r) => `${r.p} 预测${r.pred} vs 实买${r.real}`).join("｜")}`,
+    };
+  });
+
+  check("★ 永恒增幅：永恒时实得 EP == 基础 × 5^等级（且等级不重置）", () => {
+    const rows = [0, 1, 2, 3].map((lv) => {
+      const s = { ...newState(), epMultLevel: lv, infinityPoints: new Decimal(10).pow(ETERNITY.goalLog10) };
+      const base = eternityPointGain(s.infinityPoints);
+      const f = epMultFactor(s);
+      const before = Number(s.eternityPoints ?? 0);
+      doEternity(s);
+      const got = Number(s.eternityPoints) - before;
+      const exp = Number(base) * Number(f);
+      return { lv, got, exp, ok: Math.abs(got - exp) < 1e-9, keep: Number(s.epMultLevel ?? 0) === lv };
+    });
+    const badRows = rows.filter((r) => !r.ok || !r.keep);
+    return {
+      ok: badRows.length === 0,
+      detail: badRows.length === 0
+        ? `等级 0/1/2/3 ⇒ 实得 1/5/25/125 ✓｜且等级**不随永恒重置** ✓`
+        : `不一致：${badRows.map((r) => `L${r.lv} 实得${r.got} vs 期望${r.exp}｜保留=${r.keep}`).join("｜")}`,
     };
   });
 

@@ -1,0 +1,138 @@
+/**
+ * tools/wiring-lab.mjs —— 「接线」机制（第 1 步）的定点断言
+ *
+ * 规格：`docs/WIRING-NETWORK.md` ／ 清单：`docs/WIRING-STEP1-PLAN.md` §5
+ * 本工具只测**已实现的数学核心**（`src/wiring.js` ✓）；
+ * 引擎/UI/教学那几步的断言在它们落地时再补（清单 §6 第 3~7 步 ✓）。
+ *
+ * 用法：node tools/wiring-lab.mjs [--check]
+ */
+import { newState } from "../src/state.js";
+import {
+  WIRING, capacityOf, edgeCost, globalRingS, networkMultiplier, paidEdgeCount,
+  previewEdge, pushSSample, remainingCapacity, sVolatility, solveWiringRing,
+} from "../src/wiring.js";
+import { computeS } from "../src/config.js";
+
+const pad = (s, n) => String(s).padEnd(n);
+const check = process.argv.includes("--check");
+const mk = (edges = 0, freeUsed = 0) => {
+  const s = newState();
+  s.wiring = { unlocked: true, edges: [], tutorialStep: 0, freeUsed, crashedAt: -1e9 };
+  for (let i = 0; i < edges; i++) s.wiring.edges.push({ from: i % 2 ? "particle" : "matter", to: i % 2 ? "quantum" : "particle", weight: WIRING.edgeWeight });
+  return s;
+};
+
+console.log("=".repeat(104));
+console.log("接线机制（第 1 步）：S_w / M 曲线（每加一条边）");
+console.log("=".repeat(104));
+console.log(`  ${pad("边数 n", 8)}${pad("S_w", 10)}${pad("网络收益 M", 14)}${pad("S_global", 10)}${pad("收敛", 8)}判定`);
+const rows = [];
+for (let n = 0; n <= 26; n++) {
+  const s = mk(n);
+  const r = solveWiringRing(s);
+  const g = globalRingS(s);
+  rows.push({ n, ...r, g });
+  if (n <= 3 || n % 4 === 0 || n >= 22) {
+    console.log("  " + pad(n, 8) + pad(r.S.toFixed(4), 10) + pad(r.M.toFixed(2), 14) + pad(g.toFixed(4), 10) + pad(String(r.converged), 8) + (r.S >= 1 ? "✗ 接线环越线（自然上限）" : g >= 1 ? "✗ 全局越线" : "✓"));
+  }
+}
+console.log();
+
+if (check) {
+  console.log("=".repeat(104));
+  console.log("定点断言");
+  console.log("=".repeat(104));
+  let fails = 0;
+  const ck = (label, ok, detail) => {
+    if (!ok) fails++;
+    console.log(`  ${ok ? "✅" : "❌"} ${pad(label, 48)} ${detail}`);
+  };
+
+  // ── 零回归（计划 §5 第 1~2 条 ✓）──
+  {
+    const off = newState();                       // 未解锁
+    const on = mk(0);                             // 解锁但空图
+    ck("★ 零回归：未解锁时 M ≡ 1", networkMultiplier(off).eq(1), `M = ${networkMultiplier(off).toString()}`);
+    ck("★ 零回归：解锁但空图时 M ≡ 1（前段一字不动）", networkMultiplier(on).eq(1), `M = ${networkMultiplier(on).toString()}`);
+    const s0 = computeS(on);
+    ck("★ 空图时 S_global == computeS 的值（单一数据源）",
+      Math.abs(globalRingS(on) - (typeof s0 === "number" ? s0 : s0.S)) < 1e-12,
+      `S_global = ${globalRingS(on).toFixed(6)}`);
+  }
+
+  // ── 不动点（计划 §5 第 6 条 ✓）──
+  {
+    const s = mk(10);
+    const a = solveWiringRing(s);
+    ck("★ 不动点收敛（10 步内，残差 < 1e-9）", a.converged && a.steps <= 10, `${a.steps} 步收敛 ⇒ S_w = ${a.S.toFixed(6)}`);
+    // 自洽校验：把解代回公式
+    const lhs = a.S;
+    const rhs = WIRING.sPerEdge * 10 + WIRING.sPerOrderM * Math.log10(a.M);
+    ck("★ 不动点自洽：S_w == sPerEdge·n + sPerOrderM·log10(M)", Math.abs(lhs - rhs) < 1e-9,
+      `${lhs.toFixed(9)} vs ${rhs.toFixed(9)}`);
+  }
+
+  // ── 安全阀与越线（计划 §5 第 5、12 条 ✓；拉表修正 1 ✓）──
+  {
+    const s = mk(10);
+    ck("★ M 有硬上限：M ≤ maxM", solveWiringRing(s).M <= WIRING.maxM, `maxM = ${WIRING.maxM.toExponential(0)}`);
+    ck("★ M_max 是**安全阀**：S_w ≤ 0.999 时不封顶（表 A）",
+      solveWiringRing(mk(20)).M < WIRING.maxM, `n=20 ⇒ M = ${solveWiringRing(mk(20)).M.toFixed(2)} ≪ maxM ✓`);
+    const over = rows.filter((r) => r.S >= 1).map((r) => r.n);
+    ck("★ 接线环增益**自然封顶**：边数超过某点即 S_w ≥ 1（越线）",
+      over.length > 0 && Math.min(...over) >= 20 && Math.min(...over) <= 30,
+      `最早越线于 n = ${Math.min(...over)}（sPerEdge = ${WIRING.sPerEdge} ⇒ 上限 ≈ ${(1 / WIRING.sPerEdge).toFixed(0)} 条 ✓）`);
+    ck("★ 越线的边数落在「有挑战」的区间（不是 3~5 条就满、也不是 100 条才满 ✓）",
+      Math.min(...over) >= 15 && Math.min(...over) <= 40, `n_max ≈ ${Math.min(...over)} ✓`);
+  }
+
+  // ── 预演 == 实发（★ 计划 §5 第 7 条：最关键 ✓）──
+  {
+    const s = mk(2);
+    const p = previewEdge(s, "entropy", "zpe", 1e10);
+    ck("★ 预演**不落地**（边数不变）", s.wiring.edges.length === 2, `仍为 ${s.wiring.edges.length} 条 ✓`);
+    // 真接上再算一次 ⇒ 必须与预演一致
+    const s2 = mk(2);
+    s2.wiring.edges.push({ from: "entropy", to: "zpe", weight: WIRING.edgeWeight });
+    const real = solveWiringRing(s2);
+    const before = solveWiringRing(s);
+    const relS = Math.abs((real.S - before.S) - p.dS) / Math.max(1e-12, p.dS);
+    const relM = Math.abs((real.M - before.M) - p.dM) / Math.max(1e-12, p.dM);
+    ck("★★ 预演 == 实发（ΔS/ΔM 误差 < 1%）", relS < 0.01 && relM < 0.01,
+      `ΔS 相对误差 ${(relS * 100).toFixed(4)}% ｜ ΔM 相对误差 ${(relM * 100).toFixed(4)}%`);
+    ck("预演拒绝自环 / 拒绝满容量节点",
+      previewEdge(s, "zpe", "zpe", 1).ok === false, `自环 ⇒ ${previewEdge(s, "zpe", "zpe", 1).reason}`);
+  }
+
+  // ── 成本与容量（计划 §5 第 14~15 条 ✓）──
+  {
+    const s = mk(0);
+    const c1 = edgeCost(s, 100).toNumber();
+    const s2 = mk(1);
+    const c2 = edgeCost(s2, 100).toNumber();
+    ck("★ 边价随条数多项式上升（n^1.5）", c2 / c1 > 2.5 && c2 / c1 < 3.0,
+      `第 1 条 ${c1.toFixed(0)} → 第 2 条 ${c2.toFixed(0)}（×${(c2 / c1).toFixed(2)}，2^1.5 = ${Math.pow(2, 1.5).toFixed(2)} ✓）`);
+    ck("★ 免费边**不计入**成本曲线的计数", paidEdgeCount(mk(2, 2)) === 0, `2 条免费 ⇒ 付费边数 0 ✓`);
+    // ⚠️ 必须**三条都接到 particle**，否则它只分到 2 条 ⇒ 测不出"接满" ✗
+    const full = newState();
+    full.wiring = { unlocked: true, edges: [], tutorialStep: 0, freeUsed: 0, crashedAt: -1e9 };
+    for (let i = 0; i < 3; i++) full.wiring.edges.push({ from: "matter", to: "particle", weight: WIRING.edgeWeight });
+    ck("容量约束存在且可查询", capacityOf(mk(0), "particle") === 3 && remainingCapacity(full, "particle") === 0,
+      `particle 容量 3；接满 3 条后剩余 ${remainingCapacity(full, "particle")} ✓`);
+  }
+
+  // ── 波动（计划 §5 第 13 条 ✓；拉表修正 2 ✓）──
+  {
+    const s = mk(0);
+    for (let t = 0; t < 200; t += 2) pushSSample(s, t, 0.7 + 0.001 * t);
+    const v = sVolatility(s);
+    ck("★ 波动窗口滚动正确（> sWindowSec 的采样被裁掉）",
+      v.samples <= WIRING.sWindowSec / 2 + 1, `${v.samples} 个采样（窗口 ${WIRING.sWindowSec}s / 每 2s ⇒ ≤ ${WIRING.sWindowSec / 2 + 1} ✓）`);
+    ck("★ 波动幅度可算（拉表修正 2：UI 必须显示它）", v.span > 0, `span = ${v.span.toFixed(4)} ✓`);
+  }
+
+  console.log();
+  console.log(`  ${fails === 0 ? "全部通过 ✅" : `${fails} 项失败 ❌`}`);
+  process.exit(fails ? 1 : 0);
+}

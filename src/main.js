@@ -1,3 +1,7 @@
+import { quantumToIPGain } from "./config.js";
+import { buyVoidUpgrade } from "./engine.js";   // ★ 自动补（删铸币的连带损伤 ✓）
+import { buyTrap } from "./engine.js";   // ★ 自动补（删铸币的连带损伤 ✓）
+import { doClick } from "./engine.js";   // ★ 自动补（删铸币的连带损伤 ✓）
 /**
  * main.js —— 装配 + 主循环
  *
@@ -11,13 +15,33 @@
  * 掉帧、切后台、断点调试都不会让产出失真。
  */
 
-import { BASE, DE_MILESTONES } from "./config.js";
+import { BASE, DE_MILESTONES, qOf, quantumZpeMultBonus, ETERNITY, eternityPointGain, tierMilestonesDone, COLLAPSE, crunchThreshold, CRUNCH_AT_LABEL,
+  // ★★★ 2025（`docs/NEKO.md` §7）：好感度的**唯一写入点** + 窗口额度常量
+  addNekoAffinity, NEKO, useNekoItem,
+  // ★★★ 2025（`docs/NEKO.md` §6）：动作白名单的清单 + 限流上限
+  NEKO_ACTIONS, NEKO_MAX_ACTIONS_PER_TICK,
+  // ★ 2025：`has*` 探针要用的 id 表（**白名单不自己抄一份** ✓）
+  REPEATABLE, VOID_UPGRADES, DE_UPGRADES, INFINITY_UPGRADES } from "./config.js";
 import {
-  advance, breakInfinity, buyDeUpgrade, buyDreamUpgrade, buyInfinityUpgrade, buyRepeatable,
-  buyAccel, buyCoinage, buyTrap, buyVoidUpgrade, buyZpeEngineLevel, doBigCrunch, doClick, tick, unlockZpeEngine,
-} from "./engine.js";
+  advance, breakInfinity, buyDeUpgrade, buyDreamUpgrade, buyInfinityUpgrade, buyIpDoubleMax, buyRepeatable, affordableCount, zpeEngineAffordable, tick,
+  // ★★★ 2025：永恒升级「永恒增幅」（第三层设计稿 33~35 行）
+  buyEpMult,
+  // ★★ 2025 修复：这四个**被 handlers 调用却从未 import** ⇒ 每次点击都抛
+  //   `ReferenceError: xxx is not defined`，表现就是「点了没反应」✗
+  //   （用户报：「点大坍缩和购买 zpe 引擎目前无效」）
+  //   根因：主循环侧的 import 不在任何自检的覆盖范围内 ——
+  //     `node --check` 只查语法、查不出未定义标识符；而 `dom-smoke` 原来的
+  //     `addEventListener` 是空函数 ⇒ 点了什么也不会发生，这类 bug **测不出来** ✗
+  //   ⇒ 现在 dom-smoke 会真的派发 click（见那里的 `click()`）并断言状态变化 ✓
+  doBigCrunch, doEternity, unlockZpeEngine, buyZpeEngineLevel } from "./engine.js";
+// ★★★ 2025（`docs/NEKO.md` §5）：状态快照要**现算**速率与乘区 ——
+//   必须走引擎/公式的**既有函数**（快照里绝不重算公式 ⇒ 不会与实发脱节 ✓）
+import { entropyRate, matterRate, particleRate, globalMultiplierParts } from "./formulas.js";
 import { clear as clearSave, load, save } from "./save.js";
-import { newState, pushLog } from "./state.js";
+import { newState, pushLog, setLogSink } from "./state.js";
+// ★★★ 2025（`docs/NEKO.md`）：N.E.K.O 接入层（**无宿主时全部 no-op** ✓）
+//   `dispatchNekoActions` = §6 动作白名单的派发器（三条约束都实现在 `neko.js` 里）
+import { createNekoBridge, dispatchNekoActions } from "./neko.js";
 import { flashSave, initUI, render, showOfflineBanner } from "./ui.js";
 
 const AUTOSAVE_SECONDS = 15;
@@ -41,6 +65,59 @@ if (loaded) {
 }
 
 // ══════════════════════════════════════════════════════════
+// ★★★ 2025：N.E.K.O 接入层（`docs/NEKO.md`）—— **无宿主版本**
+// ══════════════════════════════════════════════════════════
+// 纪律（用户裁定「先做无宿主版本」）：**没有宿主时一切 no-op**，
+//   游戏主流程一行都不因为它而改变 ✓
+//   三件事：① 日志出口挂到桥上 ② 探测宿主并连接（连不上就静默）③ 定期推状态快照
+// ⚠️ 顺序要紧：`nekoBridgeLastPhase` **必须先声明**（`onStatus` 闭包里会读写它，
+//   而且 `connect()` 可能在造桥后**同步**触发一次 onStatus ⇒ 声明在后会 TDZ 报错 ✗）
+let nekoBridgeLastPhase = null;
+/**
+ * ★★★ 2025（`docs/NEKO.md` §6）：动作派发用的**引擎函数集合**（注入给 `neko.js`）。
+ *
+ * ⚠️ 为什么用注入而不是让 `neko.js` 直接 import engine：
+ *   ① `neko.js` 的定位是**零依赖接入层**（也避免循环依赖 ✗）
+ *   ② 这样"白名单里有哪些动作"**一眼可见**（就在下面这张表里），
+ *      而 id 合法性问 `has*` 探针（**不在这里抄 id 表** ⇒ 不会与 config 脱节）✓
+ * ⚠️ 约束②（只走既有购买函数）：下面每一个 `fn` 都是 **engine 的导出**，零自写扣款 ✓
+ */
+const nekoActionApi = {
+  maxPerTick: NEKO_MAX_ACTIONS_PER_TICK,
+  hasRepeatable: (id) => id in REPEATABLE,
+  hasVoid: (id) => id in VOID_UPGRADES,
+  hasDe: (id) => id in DE_UPGRADES,
+  hasInfinity: (id) => id in INFINITY_UPGRADES,
+  buyRepeatable,
+  buyVoidUpgrade,
+  buyDeUpgrade,
+  buyInfinityUpgrade,
+  doBigCrunch,
+  doEternity,
+};
+
+const nekoBridge = createNekoBridge({
+  getState: () => state,
+  onStatus: (phase, detail) => {
+    // 只在**状态真的变了**时写日志，避免每帧刷屏（宿主探测每帧都会跑）
+    if (phase === nekoBridgeLastPhase) return;
+    nekoBridgeLastPhase = phase;
+    if (phase === "host-ready-but-unregistered") {
+      pushLog(state, "🐍 检测到 N.E.K.O 宿主，但本游戏**尚未注册** ⇒ 暂不连接（见 docs/NEKO.md §8）");
+    } else if (phase === "error") {
+      pushLog(state, `🐍 N.E.K.O 接入错误：${detail?.message ?? String(detail)}`);
+    }
+  },
+});
+// ① 把**全部** `pushLog` 自动导向宿主（无宿主 ⇒ 桥内部直接丢弃 ✓）
+setLogSink((entry) => nekoBridge.sendLog(entry));
+// ② 探测（不阻塞：失败就是"没有宿主"，正常单机玩）
+nekoBridge.connect();
+// ③ 快照节流推送（无宿主 ⇒ no-op；有宿主 ⇒ 每 5 秒一份）
+let nekoSnapshotAccum = 0;
+const NEKO_SNAPSHOT_SECONDS = 5;
+
+// ══════════════════════════════════════════════════════════
 // 动作
 // ══════════════════════════════════════════════════════════
 
@@ -57,6 +134,41 @@ const handlers = {
   onBuyRepeatable(id, max) {
     buyRepeatable(state, id, !!max);
     afterAction();
+  },
+  /** ★ 2025：① 无限增幅「买满」（分段闭式；与升级中心的买满同一套路） */
+  onBuyIpDoubleMax() {
+    if (buyIpDoubleMax(state) > 0) {
+      save(state);
+      afterAction();
+    }
+  },
+  /**
+   * ★★★ 2025 新实现（第三层设计稿 33~35 行）：永恒升级「永恒增幅」。
+   * @param {boolean} max true = 买满（闭式反解），false = 买一级
+   */
+  onBuyEpMult(max) {
+    if (buyEpMult(state, max === true ? null : 1) > 0) {
+      save(state);
+      afterAction();
+    }
+  },
+  /**
+   * ★★★ 2025（`docs/NEKO.md` §10）：**使用一个好感度道具**（猫条 / 棒棒糖 / 猫爪）。
+   *
+   * 走 `useNekoItem`（**唯一入口**）—— 扣款与好感度写入都在那里，这里只负责存档+重绘 ✓
+   * ⚠️ 它取代了原来的 `onNekoTest`（那对 ±8 调试按钮）——
+   *   道具实装后调试按钮已删除（它们是"没有道具时的可见性补丁"）✓
+   */
+  onUseNekoItem(id) {
+    const r = useNekoItem(state, id);
+    if (r.ok) {
+      pushLog(state, `🐍 用了「${id}」，好感度 +${r.gain}（现 ${Number(state.nekoAffinity)}）`);
+      save(state);
+      afterAction();
+    } else if (r.reason) {
+      pushLog(state, `🐍 用不了「${id}」：${r.reason}`);
+      afterAction();
+    }
   },
   /** @param {boolean} max 右键或买满 */
   onBuyTrap(max) {
@@ -122,21 +234,14 @@ const handlers = {
       afterAction();
     }
   },
-  /** 坍缩加速器：买等级（max = 买满；受效果硬上限约束） */
-  onBuyAccel(max) {
-    if (buyAccel(state, max) > 0) {
+  /** 永恒：手动触发（门槛 1e280 无限点；奖励暂为占位） */
+  onEternity() {
+    if (doEternity(state)) {
       save(state);
       afterAction();
     }
   },
-  /** 无限铸币：买等级（max = 买满；受档位闸门约束） */
-  onBuyCoinage(max) {
-    if (buyCoinage(state, max) > 0) {
-      save(state);
-      afterAction();
-    }
-  },
-  /** ZPE 引擎：解锁（10 无限点） */
+  /** ZPE 引擎：解锁（条件 = **1 次大坍缩**，里程碑奖励、不花无限点、送 1 级） */
   onUnlockZpeEngine() {
     if (unlockZpeEngine(state)) {
       save(state);
@@ -176,8 +281,7 @@ const handlers = {
     state = newState();
     pushLog(state, "☢️ 宇宙已重置");
     afterAction();
-  },
-};
+  } };
 
 // ══════════════════════════════════════════════════════════
 // 主循环
@@ -250,6 +354,24 @@ function frame(nowMs) {
       autosaveAccum = 0;
       try { save(state); } catch { /* 存档失败不该影响游戏 */ }
     }
+
+    // ★ ③ 状态快照：节流推给宿主（**无宿主时是 no-op** ✓）
+    //   节奏与存档同族（都按秒累计）⇒ 不引入新的时间源 ✓
+    nekoSnapshotAccum += dt;
+    if (nekoSnapshotAccum >= NEKO_SNAPSHOT_SECONDS) {
+      nekoSnapshotAccum = 0;
+      try {
+        // 速率/乘区/档位里程碑由**引擎既有函数**现算后注入 ⇒ 快照不重算公式 ✓
+        state.__nekoRates = {
+          entropy: entropyRate(state),
+          particle: particleRate(state),
+          matter: matterRate(state),
+        };
+        state.__nekoMultipliers = globalMultiplierParts(state);
+        state.__nekoTierMilestones = tierMilestonesDone(state).map((m) => m.id ?? m.at);
+        nekoBridge.publishSnapshot();
+      } catch { /* 快照失败不影响游戏 */ }
+    }
   }
 
   // ── 节流渲染 ──
@@ -299,9 +421,25 @@ window.__game = {
   //   再包一层引号（双重编码），控制台里复制出来根本没法用。
   export: () => { save(state); return localStorage.getItem(BASE.saveKey) ?? ""; },
   reset: () => { clearSave(); state = newState(); render(state); },
+  /**
+   * ★★★ 2025（`docs/NEKO.md` §6）：**动作白名单的手动验证入口**。
+   *
+   * 为什么需要它：`controls.on` 那条路要**有宿主**才会触发，而我们现在是纯单机
+   *   ⇒ 派发器写完**无法验证** ⇒ 就会变成"写了但没人知道对不对"✗
+   *   （用户原则：「没有 ui 真的很容易误判」的同族问题：**没有调用方 = 无法验证**）
+   * ⇒ 在控制台里可以手动喂一批动作，与宿主下发**走完全同一条路** ✓
+   *   用法：`__game.nekoActions([{type:"buyRepeatable",payload:{id:"m1",max:true}}])`
+   */
+  nekoActions: (batch) => {
+    const r = dispatchNekoActions(state, batch, nekoActionApi);
+    render(state);
+    return r;
+  },
+  /** 白名单清单（给控制台/文档看） */
+  nekoActionList: () => Object.keys(NEKO_ACTIONS),
 };
 
 console.log(
-  "%c[空想增量 v0.5.1]%c 控制台可用 window.__game 调试（.state / .advance(秒) / .reset()）",
+  "%c[空想增量 v0.6.17]%c 控制台可用 window.__game 调试（.state / .advance(秒) / .reset()）",
   "color:#2fa6f7;font-weight:bold", "color:#757575",
 );

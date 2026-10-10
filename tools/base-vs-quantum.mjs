@@ -22,9 +22,9 @@ import { newState } from "../src/state.js";
 import {
   advance, buyDeUpgrade, buyDreamUpgrade, buyRepeatable, buyTrap, buyVoidUpgrade, doClick,
 } from "../src/engine.js";
-import { climbFactor, matterRate } from "../src/formulas.js";
+import { climbFactor, matterRate, particleBoostRate } from "../src/formulas.js";
 import {
-  DE_UPGRADES, DREAM_UPGRADES, REPEATABLE, VOID_UPGRADES, infinityRateMult, quantumGrowthRate,
+  DE_UPGRADES, DREAM_UPGRADES, REPEATABLE, VOID_UPGRADES, infinityRateMult,
 } from "../src/config.js";
 
 const ln10 = Math.LN10;
@@ -53,7 +53,7 @@ while (mi < marks.length && t < 6 * 3600) {
   if (L >= marks[mi]) {
     const M = s.resources.matter;
     const cf = climbFactor(s).toNumber();
-    const R = quantumGrowthRate(s.quantum, infinityRateMult(s)).toNumber();
+    const R = particleBoostRate(s);   // 原 R（已退休）—— 现在是粒子增幅速率 b
     // ★ 基础项必须**清零量子后直接读**：用减法会被量子项吃掉（浮点抵消，14 位有效数字不够）
     const qSave = s.quantum;
     s.quantum = new Decimal(0);

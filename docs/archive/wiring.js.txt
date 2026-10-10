@@ -1,0 +1,368 @@
+/**
+ * src/wiring.js —— 「接线」机制的**第 1 步**：接线 / 拆线 / 预演 / 环形放大
+ *
+ * 规格：`docs/WIRING-NETWORK.md`（含教学章 §10 与拉表结论 §11）
+ * 清单：`docs/WIRING-STEP1-PLAN.md`（8 步 / 16 条断言）
+ *
+ * ── 数学模型（本文件的核心，务必与文档一致）──
+ *
+ *   ① 边的效果：`p_to ×= (1 + w)`（**加法区** ✓ 多项式 ⇒ 安全 ✓）
+ *   ② 接线自身形成的环增益：
+ *          S_w = sPerEdge · n + sPerOrderM · log10(M)          ← 自洽（不动点）
+ *          M   = min( 1/(1 − S_w), maxM )                        ← 网络收益
+ *      ⇒ `n = 0` 时 `S_w = 0` ⇒ `M = 1` ✓（**空图零回归** ✓ 前段一字不动 ✓）
+ *   ③ 它对**全游戏既有环**的反馈（这是红线所在 ✗）：
+ *          S_global = computeS(state).S + sPerOrderM · log10(M)
+ *      ⇒ **S_global ≥ 1 ⇒ 崩落**（本轮环收益清零 ✓ 确定性判定 ✓）
+ *      ⇒ 这就是"漂移越线"：`computeS` 那一项会随游戏推进自己涨 ✗（拉表结论 ✓）
+ *
+ * ⚠️ 两条硬约束：
+ *   · 落点**只准**乘进 ZPE 产出 ✓；**不许**进 `globalMultiplier` ✗（红线 ✓）
+ *   · `computeS` 保持单一数据源 ✓（本模块**只读**它 ✓ 不另写一套 ✗）
+ */
+import Decimal from "../dist/break_eternity.esm.js";
+import { BREAK_INFINITY, computeS } from "./config.js";
+
+const D = (v) => new Decimal(v ?? 0);
+
+// ══════════════════════════════════════════════════════════
+// 参数（★ 全部由数学拉表定，见 docs/WIRING-NETWORK.md §11 ✓）
+// ══════════════════════════════════════════════════════════
+export const WIRING = {
+  /** ★ 表 A：纯**安全阀** ✗ 不调手感（取 1e6 与 1e12 玩法无差别 ✓） */
+  maxM: 1e12,
+  /** ★ 表 C：单条边 = **当前物质产出多少秒**（20 条边 ≈ 6h ✓） */
+  costSeconds: 85,
+  /** ★ 表 C：成本的幂次（多项式 ⇒ 天然安全 ✓） */
+  costGamma: 1.5,
+  /** 拆线返还比例 ✓ */
+  refund: 0.5,
+  /** ★ 表 B：崩落判定看**漂移** ⇒ 需要波动窗口 ✓ */
+  sWindowSec: 60,
+  /** 单条边的固定权重（第 1 步不做权重升级 ✓） */
+  edgeWeight: 0.35,
+  /** 单条边权重上限 ✓ */
+  weightCap: 0.6,
+  /** 每个节点的**入边容量**（未列出的节点用 defaultCap ✓） */
+  capacity: { particle: 3, matter: 2, zpe: 2, entropy: 2, quantum: 2 },
+  defaultCap: 2,
+  /** ★ 一条边给"接线自身环增益"贡献多少（决定**最多能接几条** ✓） */
+  sPerEdge: 0.04,
+  /** ★ 每 10 倍网络收益，反过来抬多少**全局环增益**（红线所在 ✓） */
+  sPerOrderM: 0.05,
+  /** 崩落后的冷却（秒）✓ */
+  crashCooldown: 120,
+  /** ★ 第二步 (c)：永恒点公式的参数（AD 基准 ✓ 但除数走钩子 ✗ 不写死 ✓） */
+  epBase: 5,          // AD：EP = floor(5^(log10(IP)/D − bias))
+  epBias: 0.7,        // AD 的 −0.7 ✓
+  precisionMax: 10,   // 精度奖励上限：贴住区间上限 ⇒ EP ×10 ✓
+  /** 教学：2 条**免费边**（不计入成本曲线的边数 ✓） */
+  tutorial: [
+    { from: "matter", to: "particle" },
+    { from: "particle", to: "matter" },
+  ],
+};
+
+// ══════════════════════════════════════════════════════════
+// 基本查询
+// ══════════════════════════════════════════════════════════
+/** 机制是否已开启（破∞时置 true ✓）——未开启时**一切恒等** ✓ */
+export function wiringActive(state) {
+  return !!(state?.wiring?.unlocked);
+}
+
+/** 已接的边（副本，防外部误改 ✓） */
+export function edgesOf(state) {
+  return Array.isArray(state?.wiring?.edges) ? state.wiring.edges : [];
+}
+
+/** 已用掉的免费边数 ✓ */
+export function freeUsedOf(state) {
+  return Math.max(0, state?.wiring?.freeUsed ?? 0);
+}
+
+/** **付费**边数（免费边不计入成本曲线 ✓） */
+export function paidEdgeCount(state) {
+  return Math.max(0, edgesOf(state).length - freeUsedOf(state));
+}
+
+/** 该节点当前的入边数 ✓ */
+export function incomingCount(state, zone) {
+  return edgesOf(state).filter((e) => e.to === zone).length;
+}
+
+/** 该节点的入边容量 ✓ */
+export function capacityOf(state, zone) {
+  return WIRING.capacity[zone] ?? WIRING.defaultCap;
+}
+
+/** 还能在该节点接几条 ✓ */
+export function remainingCapacity(state, zone) {
+  return capacityOf(state, zone) - incomingCount(state, zone);
+}
+
+// ══════════════════════════════════════════════════════════
+// 成本与环增益
+// ══════════════════════════════════════════════════════════
+/**
+ * 下一条边的价格：**当前物质产出多少秒** ✓
+ *   ⇒ 与游戏的巨大数量级无关（永远相对当前阶段 ✓）⇒ 拉表结论可直接用 ✓
+ * @param {number} matterPerSec 当前物质产出（每秒）
+ */
+export function edgeCost(state, matterPerSec) {
+  const n = paidEdgeCount(state);
+  // Decimal-first: never convert the (possibly >1e308) production to a Number (that yields Infinity)
+  const mps = D(matterPerSec);
+  return mps.mul(WIRING.costSeconds * Math.pow(n + 1, WIRING.costGamma));
+}
+
+/**
+ * ★ 接线自身环增益的不动点解（**必须迭代** ✗ 不许用"上一步的 S"糊 ✓）
+ *    S_w = sPerEdge·n + sPerOrderM·log10(M)，  M = min(1/(1−S_w), maxM)
+ * @returns {{ S: number, M: number, converged: boolean, steps: number }}
+ */
+export function solveWiringRing(state) {
+  const n = edgesOf(state).length;
+  if (!wiringActive(state) || n === 0) return { S: 0, M: 1, converged: true, steps: 0 };
+  const base = WIRING.sPerEdge * n;
+  let S = base;
+  for (let i = 1; i <= 60; i++) {
+    if (S >= 1) return { S, M: WIRING.maxM, converged: false, steps: i };
+    const M = Math.min(1 / (1 - S), WIRING.maxM);
+    const next = base + WIRING.sPerOrderM * Math.log10(M);
+    if (!Number.isFinite(next)) return { S, M, converged: false, steps: i };
+    if (Math.abs(next - S) < 1e-12) return { S: next, M: Math.min(1 / (1 - next), WIRING.maxM), converged: true, steps: i };
+    S = next;
+  }
+  return { S, M: Math.min(1 / (1 - S), WIRING.maxM), converged: false, steps: 60 };
+}
+
+/** 网络收益 M（未开启或空图 ⇒ 恒为 1 ✓） */
+export function networkMultiplier(state) {
+  return D(solveWiringRing(state).M);
+}
+
+/** 全游戏既有环增益（`computeS` ✓ 单一数据源） */
+export function baseRingS(state) {
+  const r = computeS(state);
+  return typeof r === "number" ? r : (r?.S ?? 0);
+}
+
+/**
+ * ★★ 红线：**全局**环增益 = 既有环 + 接线带来的反馈 ✗
+ *    ⇒ `≥ 1` 即崩落（"漂移越线" ✓ 拉表结论修正 3 ✓）
+ */
+export function globalRingS(state) {
+  if (!wiringActive(state)) return baseRingS(state);
+  return baseRingS(state) + WIRING.sPerOrderM * Math.log10(networkMultiplier(state));
+}
+
+// ══════════════════════════════════════════════════════════
+// 预演（★ 教学的核心：所有接线都能先看后果 ✓）
+// ══════════════════════════════════════════════════════════
+/**
+ * 预演一条候选边（**不落地、不花费** ✓）。
+ * @returns {{ ok: boolean, reason?: string, dS: number, dM: number, M: number, paybackSec: number }}
+ */
+export function previewEdge(state, from, to, matterPerSec = D(0)) {
+  if (!wiringActive(state)) return { ok: false, reason: "未开启", dS: 0, dM: 0, M: networkMultiplier(state), paybackSec: 0 };
+  if (!from || !to) return { ok: false, reason: "缺少端点", dS: 0, dM: 0, M: networkMultiplier(state), paybackSec: 0 };
+  if (from === to) return { ok: false, reason: "不能自己接自己", dS: 0, dM: 0, M: networkMultiplier(state), paybackSec: 0 };
+  if (remainingCapacity(state, to) <= 0) {
+    return { ok: false, reason: `${to} 的入边已满`, dS: 0, dM: 0, M: networkMultiplier(state), paybackSec: 0 };
+  }
+  const before = solveWiringRing(state);
+  const trial = { ...state, wiring: { ...state.wiring, edges: [...edgesOf(state), { from, to, weight: WIRING.edgeWeight }] } };
+  const after = solveWiringRing(trial);
+  const dM = after.M - before.M;
+  // 回本：物质产出被放大 dM 倍 ⇒ 相对增益 dM/M ⇒ 需要多少秒才赚回这条边的价格
+  const price = edgeCost(state, matterPerSec);
+  const ratio = before.M > 0 ? dM / before.M : 0;
+  const gainPerSec = D(matterPerSec).mul(ratio);
+  const paybackSec = gainPerSec.gt(0) ? price.div(gainPerSec).toNumber() : Infinity;
+  return { ok: true, dS: after.S - before.S, dM, M: after.M, paybackSec };
+}
+
+// ══════════════════════════════════════════════════════════
+// 波动（★ 拉表修正 2：**没有波动显示，"留余量"就是盲猜** ✗）
+// ══════════════════════════════════════════════════════════
+/** 往窗口里塞一个 S 采样（由 tick 每 2 秒调用 ✓） */
+export function pushSSample(state, t, s) {
+  if (!wiringActive(state)) return;
+  const w = (state.sWindow ??= []);
+  w.push({ t, s });
+  const cut = t - WIRING.sWindowSec;
+  while (w.length && w[0].t < cut) w.shift();
+}
+
+/** 近 `sWindowSec` 秒的 S 波动 ✓ */
+export function sVolatility(state) {
+  const w = state.sWindow ?? [];
+  if (!w.length) return { min: 0, max: 0, span: 0, samples: 0 };
+  let min = Infinity, max = -Infinity;
+  for (const p of w) { if (p.s < min) min = p.s; if (p.s > max) max = p.s; }
+  return { min, max, span: max - min, samples: w.length };
+}
+
+/**
+ * ★ 崩落判定（**确定性** ✓）：全局环增益 ≥ 1 ⇒ 越线 ✓
+ *   注意：判据是"漂移越线" ✓ —— 贴线但不漂**不触发** ✓（拉表修正 3 ✓）
+ */
+export function shouldCrash(state) {
+  if (!wiringActive(state)) return false;
+  const now = state.wiring?.now ?? 0;
+  if (now - (state.wiring.crashedAt ?? -Infinity) < WIRING.crashCooldown) return false;
+  return globalRingS(state) >= 1;
+}
+
+// ══════════════════════════════════════════════════════════
+// 引擎侧的接口（**逻辑全在这里** ✓ ⇒ 引擎那边只留一行钩子 ✓ 纯 ASCII ✓）
+// ══════════════════════════════════════════════════════════
+
+/** 破∞时开启本机制（赠送 2 条免费边的**额度** ✓ 由玩家自己接 ✓） */
+export function unlockWiring(state) {
+  state.wiring ??= { unlocked: false, edges: [], tutorialStep: 0, freeUsed: 0, crashedAt: -1e9 };
+  if (state.wiring.unlocked) return false;
+  state.wiring.unlocked = true;
+  return true;
+}
+
+/**
+ * ★ M 的**唯一落点**：乘进 ZPE 产出 ✓（❌ 绝不进 globalMultiplier ✗ —— 红线 ✓）
+ *   未开启 / 空图 ⇒ 乘 1 ⇒ **零回归** ✓
+ */
+export function applyToZpeRate(state, rate) {
+  const m = networkMultiplier(state);
+  return m === 1 ? rate : rate.mul(m);
+}
+
+/**
+ * 接线（花物质 ✓）。免费额度内的边**不花钱** ✓ 也不计入成本曲线 ✓。
+ * @returns {{ ok: boolean, reason?: string, free?: boolean }}
+ */
+export function tryBuyEdge(state, from, to, matterPerSec = D(0)) {
+  if (!wiringActive(state)) return { ok: false, reason: "未开启" };
+  const p = previewEdge(state, from, to, matterPerSec);
+  if (!p.ok) return { ok: false, reason: p.reason };
+  const freeLeft = WIRING.tutorial.length - freeUsedOf(state);
+  const isFree = freeLeft > 0 && freeTutorialSlot(state, from, to);
+  if (isFree) {
+    state.wiring.edges.push({ from, to, weight: WIRING.edgeWeight });
+    state.wiring.freeUsed = freeUsedOf(state) + 1;
+    state.wiring.tutorialStep = Math.max(state.wiring.tutorialStep ?? 0, state.wiring.freeUsed);
+    return { ok: true, free: true };
+  }
+  const price = edgeCost(state, matterPerSec);
+  if (D(state.resources?.matter ?? 0).lt(price)) return { ok: false, reason: "物质不足" };
+  state.resources.matter = D(state.resources.matter).sub(price);
+  // store the small dimensionless multiplier (safe to serialize), not the huge price itself
+  const paidMult = WIRING.costSeconds * Math.pow(paidEdgeCount(state) + 1, WIRING.costGamma);
+  state.wiring.edges.push({ from, to, weight: WIRING.edgeWeight, paidMult });
+  return { ok: true, free: false };
+}
+
+/** 教学的前两条免费边必须**正好是**预订的那两条 ✓（教学脚本化 §10.3 ✓） */
+function freeTutorialSlot(state, from, to) {
+  const i = freeUsedOf(state);
+  const t = WIRING.tutorial[i];
+  return !!t && t.from === from && t.to === to;
+}
+
+/** 拆线：返还 `refund` ✓；免费边拆掉也退回免费额度 ✓（返还额由 WithRefund 版计算 ✓） */
+export function tryRemoveEdge(state, index) {
+  if (!wiringActive(state)) return { ok: false, reason: "未开启" };
+  const edges = edgesOf(state);
+  if (!(index >= 0 && index < edges.length)) return { ok: false, reason: "没有这条边" };
+  edges.splice(index, 1);
+  if (index < freeUsedOf(state)) state.wiring.freeUsed = Math.max(0, freeUsedOf(state) - 1);
+  return { ok: true };
+}
+
+/** 带返还额计算的拆线（引擎调用这个 ✓） */
+export function tryRemoveEdgeWithRefund(state, index, matterPerSec = D(0)) {
+  const e = edgesOf(state)[index];
+  const paidMult = e?.paidMult ?? (WIRING.costSeconds * Math.pow(paidEdgeCount(state) + 1, WIRING.costGamma));
+  const refundAmount = D(matterPerSec).mul(paidMult).mul(WIRING.refund);   // Decimal end to end
+  const r = tryRemoveEdge(state, index);
+  if (r.ok && state.resources?.matter) {
+    state.resources.matter = D(state.resources.matter).add(refundAmount);
+  }
+  return { ...r, refundAmount };
+}
+
+/**
+ * ★ 每 tick 的维护：采样 S（波动窗口 ✓）→ 判崩落 → 执行崩落 ✓
+ * @returns {{ crashed: boolean }}
+ */
+export function tickWiring(state, nowSec) {
+  if (!wiringActive(state)) return { crashed: false };
+  pushSSample(state, nowSec, globalRingS(state));
+  if (!shouldCrash(state)) return { crashed: false };
+  // 崩落：**本轮环收益清零** ✓（不碰跨轮资产 ⇒ 存档安全 ✓）
+  state.wiring.edges = [];
+  state.wiring.freeUsed = 0;
+  state.wiring.crashedAt = nowSec;
+  state.sWindow = [];
+  return { crashed: true };
+}
+
+
+// ══════════════════════════════════════════════════════════
+// 第二步 (c)：**递进式精度门槛** + 结合 AD 的永恒点公式
+//   · 第 k 次永恒要求的 S 区间 [lo_k, hi_k]：lo 递增、hi 逼近 1 ✓
+//     ⇒ 每次永恒后旧网失效 ⇒ 必须重接 ✓（层的深度 = 对同一张网要求更精确 ✓）
+//   · EP = floor( epBase^( log10(IP)/D − epBias ) × precisionBoost ) ✓
+//     precisionBoost = 1 + t² ×(precisionMax − 1)，t = 贴上限的程度 ∈ [0,1] ✓
+//   · ★ D（除数）走**钩子** epDivisor() ✓ —— 用户未来的"裂缝"类升级将改写它 ✓
+//     默认取物质上限 308.2547（与 AD 的 308.25 同源 ✓ 单一数据源 ✓）
+// ══════════════════════════════════════════════════════════
+
+/** 第 k 次永恒的精度区间：lo 递增、hi 逼近 1 ✓ */
+export function eternityBand(k) {
+  const n = Math.max(0, Math.floor(Number(k) || 0));
+  return { lo: 1 - Math.pow(0.5, n + 1), hi: 1 - Math.pow(0.05, n + 1) };
+}
+
+/** 精度评估：S 落在区间里的位置 t ∈ [0,1]（贴上限 = 1 ✓） */
+export function eternityPrecision(state) {
+  const k = Math.max(0, Math.floor(Number(state?.eternityCount ?? 0)));
+  const band = eternityBand(k);
+  const S = globalRingS(state);
+  const t = (S - band.lo) / (band.hi - band.lo);
+  return { k, lo: band.lo, hi: band.hi, S, t: Math.max(0, Math.min(1, t)), inside: S >= band.lo && S <= band.hi };
+}
+
+/**
+ * ★ 除数钩子（AD 公式里的 D ✓）
+ *   默认 = 物质上限 308.2547 ✓（单一数据源 ✓，与 AD 的 308.25 同源 ✓）
+ *   ⚠️ 用户未来的"裂缝"类升级会**另外调用/改写**它 ⇒ 这里保持成一个函数 ✓ 不要内联常量 ✗
+ */
+export function epDivisor(state) {
+  return BREAK_INFINITY.maxLog10;
+}
+
+/** 永恒点收益（结合 AD 公式 + 我们的精度奖励 ✓） */
+export function eternityPointsGain(state) {
+  const ip = D(state.infinityPoints ?? 0);
+  if (ip.lte(1)) return D(0);
+  const p = eternityPrecision(state);
+  const boost = 1 + Math.pow(p.t, 2) * (WIRING.precisionMax - 1);
+  const exp = ip.log10().div(epDivisor(state)).sub(WIRING.epBias);
+  return Decimal.pow(WIRING.epBase, exp).mul(boost).floor().max(0);
+}
+
+/** ★(c) 的**门槛**：结构条件 + 精度区间（四条 ✓ 与规格 §4 一致 ✓） */
+export function eternityGate(state) {
+  const es = edgesOf(state);
+  const p = eternityPrecision(state);
+  const zones = new Set();
+  for (const e of es) { zones.add(e.from); zones.add(e.to); }
+  const hasRing = es.some((a) => es.some((b) => b !== a && b.from === a.to && b.to === a.from));
+  const checks = [
+    { key: "ring", label: "接出一个环", ok: hasRing },
+    { key: "band", label: `S 落在 [${p.lo.toFixed(4)}, ${p.hi.toFixed(4)}]`, ok: p.inside },
+    { key: "zones", label: "覆盖 3 个乘区", ok: zones.size >= 3, detail: `${zones.size} 个` },
+    { key: "edges", label: "至少 1 条接线边", ok: es.length > 0, detail: `${es.length} 条` },
+  ];
+  return { ok: checks.every((c) => c.ok), checks, precision: p };
+}
