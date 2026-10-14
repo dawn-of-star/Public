@@ -1,5 +1,11 @@
 # ∞ 层升级（已实现 12 条 + 候选清单）
 
+> **状态：⚠️ 待同步（结构对，但 `ipTime` 的"待删"结论已被推翻）** —— 最后核对 2025
+> ⚠️⚠️ **`ipTime`（无限长河）没有删、也不该删** ——
+>   `README-STATUS.md` / `TODO.md` A 段曾把它记为"待删"，但实测它是**活代码**
+>   （`config` 定义 + `engine` tick 里实时产点 + `ui` 显示 + `state` 字段），
+>   而且 `tools/dom-smoke.mjs` 的「① 行数值更新」断言**仍在测它** ✗
+>   `unspentBoost`（沉潜蓄能）才是**真的删掉了**的那个 ✓
 > 版本：0.6.13 · 状态：**①②③④ + 起点跃迁 I~IV + 速率解放 I~IV 已实现**；
 > **爬升形状（路线 1）与 ④ 的 30 分钟上限也已落地**（见 3.1 / 3.2）
 > 参考对象：AD（反物质维度）原版无限升级，源码见 `E:\game\AD-breaketernity-main\src\core\secret-formula\infinity\infinity-upgrades.js`
@@ -39,10 +45,13 @@
 | 这段的爬升全靠量子项，**a区 产率升级对它无效** | 基础环比指数项小 **1e200 倍** | 同上；也解释「熵阱价格 ×10 只让熵阱少一半、斜率一字不变」 |
 | 整段耗时 = (308.2547 − 起始阶数) ÷ R_eff，且 `R_eff ≤ growthRateMax` | 基线 283.25 阶 @0.0488 ≈ **96.7 分钟**（+ 前置 6 分钟） | `tools/headless.mjs` / `tools/infinity-sim.mjs` |
 
-**由此得到一条硬结论**：这段曲线只有 **两个** 真杠杆 ——
+**由此得到一条硬结论**（**R 时代**的结论，历史备查 ✓）：这段曲线只有 **两个** 真杠杆 ——
 
-- **L1 抬 `R` 的上限**（`QUANTUM.growthRateMax`）
+- **L1 抬 `R` 的上限**（**当时**是 `QUANTUM.growthRateMax`，**该常数已删除** ✗）
 - **L2 缩短距离**（抬高起始深度 / 降低解锁门槛）
+
+> ⚠️ 现行机制下"斜率"由 **跨度幂 `k`**（`matterSpanMult`）与**粒子时变增幅 `b`** 承担，
+>   不再是 `R` ⇒ 上面这条结论**不能**直接套到现在 ✓
 
 「让 R 更快饱和」（给量子、降捕获门槛）**几乎没收益** —— 因为解锁瞬间 R 已经吃到 95%。
 
@@ -93,7 +102,11 @@
 | 3 | 速率解放 III | 1e3 | 再 +0.01 | 累计 −30% | ★ |
 | 4 | 速率解放 IV | 1e4 | 再 +0.02 | 累计 −39% | ★ |
 
-> 实现位置：`quantumGrowthRate()` 的 `QUANTUM.growthRateMax`。
+> 实现位置：**当时**是 `quantumGrowthRate()` 里的 `QUANTUM.growthRateMax` ✓
+> ⚠️⚠️ **2025 更正**：`QUANTUM.growthRateMax` **已随 `R` 退休而删除**（见 `src/config.js` 的删除说明）。
+>   本节（§0~§1）的「速率解放 I~IV 给 `R` 上限 +…」**是 R 时代的形状**，
+>   现行 ∞ 层里对应的东西是 `state.speedBought`（见 `INFINITY_ORDER` 的现役条目）⇒
+>   **读本节时请对照代码**，不要按这里的 `R` 数字去做实现 ✗
 > ⚠️ 这是**动 S 预算之外**的量（它改的是斜率常数，不是乘法升级），但要复查"1.6 小时节奏"这个设计保证。
 
 ### 第 2 排 · 距离（L2）
@@ -155,9 +168,17 @@
 ⇒ **选 knee = 25**：与 50/100 的"起点跃迁收益"完全相同（−39%~−40%），但形状全程在弯；
 只有 200 才让起点跃迁更强，代价是前 175 阶又变回直线（正是要避免的东西）。
 
-**已落地的三个量**（必须一起改，否则总时长会漂）：
-`config.js` 的 `CLIMB = { knee: 25, halvingOrders: 100 }`、`QUANTUM.growthRateMax = 0.147`、
+**已落地的量**（必须一起改，否则总时长会漂）：
+`config.js` 的 `CLIMB = { knee: 25, halvingOrders: 100 }`、
 `formulas.js` 的 `climbFactor()`（并与 `tick` 共用 → 显示 == 实际）。
+
+> ⚠️⚠️ **2025 更正**：本节原写「三个量：`CLIMB` + `QUANTUM.growthRateMax = 0.147` + `climbFactor()`」
+>   —— **`growthRateMax` / `growthRateHalf` 已经删除了**（随 `R`（指数成长速率）退休，
+>   见 `src/config.js` 里那段删除说明：「原先"量子越多 R 越高、上限 0.147"的饱和式不再存在」）✗
+>   实测：`QUANTUM` 现在的字段是
+>   `zpeBaseCost / zpeCostGrowth / zpeCostExtraNerf / captureTierFactor / perPair`（**没有 growthRateMax**）。
+>   ⇒ 读本节时以 `CLIMB` + `climbFactor()` **两件**为准 ✓
+>   （计数/常数一律以 [`CONFIG-FACTS.md`](CONFIG-FACTS.md) 为权威）
 
 ### 3.2 ④ 的耗时上限 —— **已落地（1800 秒）**
 

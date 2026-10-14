@@ -24,7 +24,13 @@ import { hasCollapse, transmuterIpMult,
   // ★★★ 2025（用户裁定）：引擎等级对【量子加成】的乘数（= costGrowth^等级，与价格同速）
   engineBonusMult,
   // ★★★ 2025（`docs/NEKO.md` §7）：好感度 ⇒ 全局加成 ^指数（唯一入口）
-  nekoGlobalExponent } from "./config.js";
+  nekoGlobalExponent,
+  // ★★★ 2026：「永恒之后」第一块 = 暗物质 / 第二台相变仪。
+  //   ⚠️ 落点是**暗能量倍率的加法区**（**不是** `darkEnergyRate`）——
+  //     唯一入口 `darkMatterAdditiveTerm()`（未解锁 ⇒ 恰好 0 ⇒ 零回归 ✓）
+  darkMatterAdditiveTerm,
+  // ★★★ 2026：`em4`「优化暗能量获取公式」的唯一入口（1.10 → 1.12，见 config.js 的说明）
+  deGainBaseEffectMult } from "./config.js";
 import { deLevelOf, hasDe, hasV9, hasVoid, hasZpe, levelOf } from "./state.js";
 
 const D = (v) => new Decimal(v ?? 0);
@@ -404,7 +410,13 @@ export function darkEnergyMultiplier(state) {
   // ★ 量子：作为**基础加成**加进括号里（a区），量是 q²。
   //   `暗能量倍率 = (1 + 0.25·log2(暗能量)) + q²`
   // ★★★ 2025（用户裁定）：量子这项也吃引擎倍率（5 条之一）
-  const base = D(1).add(x.mul(coeff)).add(quantumDeMultBonus(qOf(state), engineBonusMult(state)));
+  // ★★★ 2026：「永恒之后」第一块 —— 暗物质的转化值**加进同一个加法池**（与 q² 同形制）。
+  //   未解锁 / n = 0 ⇒ 恰好 0 ⇒ **零回归** ✓
+  //   ⚠️ 它是**加法区常数项** ⇒ 不进 `computeS`（那只统计可重复乘法升级），
+  //      且常数只在 `∂ln(倍率)/∂ln(DE)` 的**分母**里 ⇒ 引擎环增益**下降** ⇒ 更安全 ✓
+  const base = D(1).add(x.mul(coeff))
+    .add(quantumDeMultBonus(qOf(state), engineBonusMult(state)))
+    .add(darkMatterAdditiveTerm(state));
   const accel = Decimal.pow(
     dreamUpgradeEffects(state).vacuumAccelEffectMult,
     deLevelOf(state, "vacuumAccel"),
@@ -423,8 +435,10 @@ export function darkEnergyGainPerConversion(state) {
   let g = Decimal.pow(d.phaseShiftEffectMult, deLevelOf(state, "phaseShift"))
     .mul(d.phaseShiftBaseMult)
     // ★ 新增「相变增幅」：基础暗能量获取的乘法区
+    //   ★★★ 2026：倍率改走 `deGainBaseEffectMult(state)` —— **em4「优化暗能量获取公式」的唯一入口**
+    //   （em4 前 = 1.10，em4 后 = 1.12；**不许**在这里直接读 `DE_UPGRADES.deGainBase.effectMult` ✗）
     .mul(Decimal.pow(
-      DE_UPGRADES.deGainBase.effectMult,
+      deGainBaseEffectMult(state),
       deLevelOf(state, "deGainBase"),
     ));
   if (hasDe(state, "dm5")) g = g.mul(darkEnergyMultiplier(state));
@@ -684,6 +698,18 @@ export function shouldCrunch(state, baseRate = undefined) {
   //     （k↑ ⇒ 更快 ⇒ T_best 更小 ⇒ 加成更高 ⇒ 正反馈，但被"时间上限"钉住 ⇒ 不发散 ✓）
   //
   //   ⚠️ 旧的 rate 判据**保留为兜底**：万一时间上限到不了，仍能把轮次结束掉 ⇒ 不卡死。
+  //
+  //   ⚠️⚠️ **2026 实测：它根本不是「万一」—— 兜底才是实际生效的那条，而且它承重** ✗
+  //     · 实测每次大坍缩 ≈ **35 秒**（< `runSeconds = 300`）
+  //       ⇒ 触发的**一直是下面这条 rate 判据**；主判据（按时间）从没到过 ✗
+  //       ⚠️ 注意口径：必须只算**破∞之后**那一段（破∞前 `!brokenInfinity` ⇒ 一次坍缩都没有）
+  //     · 关掉兜底的实测代价（lab：`tools/dark-matter-lab.mjs --crunchbelow=off`）：
+  //         每轮永恒 **5.46h → 10.72h**（破∞时刻几乎不变 4.38h）
+  //         ⇒ 慢的**全在「破∞→永恒」那一段**（0.8h → 3.0h）✗
+  //     ⇒ 所以**不能删它**（删了尾段没法玩）。
+  //     · ⚠️ 但它**不是**"乘区型加成没效果"的元凶 —— A/B 实测：关掉它之后
+  //       暗物质的**相对**收益反而**变小**（24.9% → 17.9%，因为基线变长）✗
+  //       真正的原因是"落点在生产乘区"本身 ⇒ 见 `docs/DARK-MATTER.md` §3 三/四
   const limit = OVERLOAD.runSeconds;
   if (limit != null && Number.isFinite(limit)) {
     const elapsed = Number(state.runElapsed ?? 0) || 0;
@@ -783,6 +809,9 @@ export function effectiveDarkEnergyGain(state) {
 export function darkEnergyRate(state) {
   if (!state.phaseTransmuterUnlocked) return D(0);
   const r = zpeRate(state).div(BASE.darkEnergyThreshold).mul(effectiveDarkEnergyGain(state));
+  // ⚠️ 2026：暗物质的落点**不在这里**。
+  //   我第一版按设计稿字面把它乘在这个函数里（"提升第一个相变仪的获取效率"），
+  //   但用户 2026 重写的规则把落点定为**暗能量倍率的加法区** ⇒ 见 `darkEnergyMultiplier()` ✓
   // ★ ∞ 层 ③「相变超频」：无限点加速相变仪（ZPE → 暗能量）
   if (state.ipToTransmuterBought) {
     return r.mul(D(1).add(D(INFINITY_UPGRADES.ipToTransmuter.perIp).mul(state.infinityPoints ?? 0)));

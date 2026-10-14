@@ -8,7 +8,9 @@
  *   ⇒ 也就是 IC 的定位是「**跑到足够深之后的爆发**」，不是一条新资源线 ✓
  *
  * ── 这张表要回答的问题 ──
- *   到永恒要跨 275 阶（1e5.3 → 1e280），而这些阶数只能由两个通道承担：
+ *   到永恒要跨 **≈303 阶**（1e5.3 → 1e308.25），而这些阶数只能由两个通道承担：
+ *     ⚠️ 2026：门槛原来是 1e280（275 阶），已按用户裁定改成 **1e308.25**（见 `src/config.js`）
+ *        —— 本文件的 `GOAL` 从 `ETERNITY.goalLog10` 取，所以表会自适应；只有这句注释要跟上 ✓
  *     · **深度收益**：`floor((log10M/308.2547)²)` —— 实测**硬顶 ~1e41**
  *       （即使物质推到 1e2000 也只有 4e1）⇒ 单独到不了 ✗
  *     · **① 无限增幅**：`×2^等级` —— **必须扛下剩下的部分**
@@ -118,7 +120,9 @@ console.log();
 console.log("─".repeat(94));
 console.log("表 2｜① 的价格曲线（旋钮：每级涨价倍率与分段）⇒ 买到 N 级要多少 IP");
 console.log("─".repeat(94));
-console.log(`  现状价格（AD 两段）：门槛 ${IP_DOUBLE_AD.costIncreaseThreshold.toString()} 前 ×${IP_DOUBLE_AD.stepShallow.toString()}，之后 ×${IP_DOUBLE_AD.stepSteep.toString()}，封顶 ${IP_DOUBLE_AD.costCap.toString()}`);
+// ⚠️ 2025：`costCap` 已**彻底删除**（用户裁定）⇒ 这一行不能再读它 ✗
+//   （原来写 `封顶 ${IP_DOUBLE_AD.costCap}` ⇒ 现在会打印 `undefined`）
+console.log(`  现状价格（AD 两段）：门槛 ${IP_DOUBLE_AD.costIncreaseThreshold.toString()} 前 ×${IP_DOUBLE_AD.stepShallow.toString()}，之后 ×${IP_DOUBLE_AD.stepSteep.toString()}，**不封顶**`);
 console.log();
 console.log("   目标等级   现有曲线价格(log10)   每级×1.5(线性段)   每级×1.2   每级×1.05");
 for (const lv of [100, 300, 600, 924, 1200]) {

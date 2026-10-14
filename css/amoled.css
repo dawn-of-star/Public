@@ -145,6 +145,67 @@ body {
 }
 @media (max-width: 900px) { .neko-cols { grid-template-columns: 1fr; } }
 
+/* ══════════════════════════════════════════════════════════
+   ★★★ 2026：**七巧板**（永恒的子页；机制尚未实现 —— 见 docs/TANGRAM.md）
+   · 用户指定版式：**左右布局** —— 左 = 坐标轴，右 = 巧板托盘（**约占 15%**）
+   · 下方 = 拼装挑战（走阈值逻辑，暂列代办）
+   ⚠️ 与 `.neko-cols` 同一套断点（900px 以下退成单列）✓
+   ══════════════════════════════════════════════════════════ */
+.tangram-wrap {
+  display: grid;
+  /* ★★ 用户 2026 指定：右侧巧板托盘**约占 15% 空间**（dom-smoke 有守卫盯着这个 15%） */
+  grid-template-columns: minmax(0, 1fr) 15%;
+  gap: var(--gap);
+  align-items: start;
+  margin-bottom: 14px;
+}
+@media (max-width: 900px) { .tangram-wrap { grid-template-columns: 1fr; } }
+
+/* 左：坐标轴（目标正方形 ＋ 三条线 ＋ 覆盖率读数）
+   ★★ 2026 用户：「加成坐标轴太小了，大小**翻 5 倍**差不多」⇒ `190px → 950px`
+   ★ 2026 用户二次调整：「以当前尺度**缩小约 10%**」（并声明是**最后一次**动版块）⇒ `950px → 855px`
+   ⚠️⚠️ **尺寸与线宽是耦合的**：`stroke-width` 是 **viewBox 单位**，SVG 放大 5 倍线就粗 5 倍 ✗
+     ⇒ 所以线宽同步**缩 5 倍**（2→0.4 等），让**屏幕上的粗细保持不变**（≈3.6px，AMOLED 细线风格 ✓）
+     ⚠️ 这 10% 的二次缩小**没有再动线宽**：3.6px → 3.2px 低于感知阈值，
+        而按比例改反而让"名义尺寸 ↔ 线宽"的对应关系多一个无意义的数字 ⇒ 有意为之 ✓
+     （`vector-effect: non-scaling-stroke` 看着更省事，但它会把 `stroke-dasharray` 也变成
+       屏幕像素 ⇒ 覆盖率高亮的 dash 数学会**算错** ⇒ 不能用 ✗）*/
+.tangram-board { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.tangram-svg {
+  width: min(855px, 100%);      /* `min()` ⇒ 窄屏不溢出（用户要的尺寸只在有地方时生效） */
+  height: auto;
+  aspect-ratio: 1 / 1;
+  flex: 0 0 auto;
+}
+.tangram-svg .tg-frame { fill: none; stroke: var(--line-strong); stroke-width: 0.16; }
+.tangram-svg .tg-axis { stroke: var(--text-faint); stroke-width: 0.4; }
+/* 覆盖率高亮：`stroke-dashoffset` 由 JS 驱动（未实现 ⇒ 恒为全长 = 看不见） */
+.tangram-svg .tg-cov { stroke: var(--eternity); stroke-width: 0.52; stroke-linecap: round; }
+.tangram-axes { display: flex; flex-direction: column; gap: 6px; min-width: 205px; }
+.tangram-axes > div { display: flex; justify-content: space-between; gap: 14px; }
+.tangram-axes span { color: var(--text-dim); }
+
+/* 右：巧板托盘（约占 15%）—— 七块板的槽位 */
+.tangram-tray {
+  border: 1px dashed var(--line-strong);
+  border-radius: var(--radius);
+  padding: 8px;
+  min-height: 150px;
+  background: var(--bg-card);
+}
+.tangram-tray-title { color: var(--text-dim); font-size: 12px; margin-bottom: 6px; }
+.tangram-slots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.tangram-slot {
+  aspect-ratio: 1 / 1;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--text-faint);
+  font-size: 11px;
+  text-align: center;
+  padding: 2px;
+}
+
 /* 对话区的消息流（等 SDK 接入后填充；现在只有占位） */
 .neko-chat { display: flex; flex-direction: column; gap: 8px; min-height: 180px; }
 .neko-msg { padding: 8px 10px; border-radius: var(--radius); border: 1px solid var(--line); }
@@ -373,8 +434,24 @@ button { font: inherit; cursor: pointer; }
 .tool.danger:hover { border-color: var(--bad); color: var(--bad); }
 .tool.on { border-color: var(--green); color: var(--green); }
 
-/* ══════════════ 锁定态 ══════════════ */
+/* ══════════════ 性能监视器（诊断用，默认隐藏）══════════════
+   ★★★ 2025（用户报「数字跳动速率及其低下」）：
+   右上角一块小 HUD。它自己必须便宜 —— 所以：
+     · `position: fixed` + `pointer-events: none` ⇒ **不参与布局**（不引起回流）✓
+     · 只在打开时才被写（每 20 帧一次）✓
+   ⚠️ 用 `white-space: pre` 保留换行（文本里有 `\n`），避免每行单独建元素 ✗ */
+#perf-hud {
+  position: fixed; top: 8px; right: 8px; z-index: 9999;
+  pointer-events: none;
+  padding: 8px 10px; border-radius: var(--radius);
+  background: rgba(0, 0, 0, .82); border: 1px solid var(--line-strong);
+  color: var(--text-dim); font-size: 11px; line-height: 1.6;
+  font-family: ui-monospace, Consolas, monospace;
+  white-space: pre; text-align: right;
+}
+#perf-hud[hidden] { display: none; }
 
+/* ══════════════ 锁定态 ══════════════ */
 .locked {
   text-align: center; padding: 20px 14px;
   color: var(--text-faint); font-size: 12.5px;
@@ -778,4 +855,143 @@ button { font: inherit; cursor: pointer; }
     #ff5f6d, #ffc371, #7ee787, #4dd0e1, #7c4dff, #ff5f6d);
   background-size: 100% 300%;
   animation: dreamHueY 6s linear infinite;
+}
+
+/* ══════════════════════════════════════════════════════════════
+   ★★★ 2025：**全页面悬浮重置窗**（用户要求）
+   「全页面悬浮的窗口，内含 无限/永恒/时空/梦想 四个重置按钮……
+
+   ── 为什么是 `fixed` ──
+     "全页面悬浮" = **滚动时也一直在** ⇒ 必须 `position: fixed`（不是 absolute）✓
+
+   ── 为什么可以折叠 ──
+     悬浮窗会挡住右下角的内容 ⇒ 必须能收起来（`.fr-collapsed` 只留标题栏）✓
+
+   ── z-index ──
+     比 `#perf-hud`（9999）略高，因为它是**操作入口**、HUD 是诊断 ✗ 抢不过没关系：
+     两者默认不会重叠（HUD 在右上，本窗在右下）✓
+   ══════════════════════════════════════════════════════════════ */
+.float-resets {
+  position: fixed;
+  right: 10px;
+  bottom: 10px;
+  z-index: 10000;
+  width: 186px;
+  background: var(--bg-card, #0e0e0e);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 22px rgba(0, 0, 0, .75);
+  font-size: 12px;
+  user-select: none;
+}
+/* 折叠：只留标题栏（`display:none` 会让状态丢失 ⇒ 用 height/overflow） */
+.float-resets.fr-collapsed .fr-body { display: none; }
+
+.fr-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 6px 5px 9px;
+  border-bottom: 1px solid var(--line);
+  cursor: default;
+}
+.fr-collapsed .fr-head { border-bottom: 0; }
+.fr-title { color: var(--text-dim); font-size: 11px; letter-spacing: .12em; }
+.fr-min {
+  width: 20px; height: 20px; line-height: 1;
+  background: transparent; color: var(--text-dim);
+  border: 1px solid var(--line-strong); border-radius: 4px;
+  cursor: pointer; font-size: 13px; padding: 0;
+}
+.fr-min:hover { color: var(--text-bright); border-color: var(--accent); }
+
+.fr-body { display: flex; flex-direction: column; gap: 5px; padding: 7px; }
+
+.fr-btn {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 6px;
+  flex-wrap: wrap;              /* ★ 副标题太长时换行，而不是被截断（`0 / 1.00e280` 会挤掉）✓ */
+  padding: 7px 9px;
+  background: #141414;
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  /* 左侧乘区色条（与页面上的 `.btn.zone` 同一套语义）✓ */
+  border-left: 3px solid var(--zone, var(--line-strong));
+  border-radius: 5px;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  transition: background .12s, border-color .12s;
+}
+.fr-btn:hover:not(:disabled) { background: #1e1e1e; border-color: var(--zone, var(--accent)); }
+.fr-btn:active:not(:disabled) { background: #262626; }
+.fr-btn .fr-name { font-weight: 600; }
+/* ★ 副标题占满整行 —— 数字（`0 / 1.00e280`）比"大坍缩"长得多，
+   挤在同一行会把数字切掉 ✗ ⇒ 让它独占一行（`flex-basis:100%`）✓ */
+.fr-btn .fr-sub { flex: 1 0 100%; color: var(--text-dim); font-size: 10px; }
+
+/* 可用态：整条边框点亮乘区色（与 `.btn.affordable` 同一语义）✓
+   ⚠️ 底色**不用 `color-mix()`** —— 那是较新的 CSS 特性，
+     本项目要能在 Edge / 旧 Chromium 上跑 ⇒ 用"乘区色 + 低透明度的
+     径向渐变"达到同样的"泛光"效果（兼容性无风险）✓ */
+.fr-btn.affordable {
+  border-color: var(--zone, var(--green));
+  background:
+    radial-gradient(120% 130% at 0% 50%, rgba(255, 255, 255, .10), transparent 62%),
+    #141414;
+  box-shadow: inset 0 0 0 1px var(--zone, var(--green));
+}
+.fr-btn.affordable .fr-sub { color: var(--zone, var(--green)); }
+
+/* ── 占位按钮（时空 / 梦想）──
+   刻意**禁用了指针事件**：点不动、也不显示"点了没反应"的假象 ✗
+   （`disabled` 已挡点击，这里再加 `cursor` 与灰度，视觉上一眼可辨）✓ */
+.fr-placeholder {
+  opacity: .55;
+  cursor: not-allowed;
+  border-left-style: dashed;
+}
+.fr-placeholder .fr-sub { color: var(--text-faint); }
+
+/* ── 时空：**黑白流动**（用户指定配色）──
+   ⚠️ 用户先说的是"黑白闪烁"，随后更正为「**黑白流动**」⇒
+     用**流动的渐变**（`background-position` 动），不是 `steps` 硬切 ✗
+   ── 实现要点 ──
+     · `background: linear-gradient(...)` + `background-size` 放大到 300%
+       ⇒ 再动 `background-position` 就有了"连续流过"的感觉 ✓
+     · 文字用 `mix-blend-mode: difference`：底色无论是黑是白，
+       文字都自动取反色 ⇒ **不需要**再动画 `color`（那会与背景不同步、闪烁感更强）✗
+     · 只用这一个小元素做动画 ⇒ 重绘代价可忽略（本项目的性能教训：动画别铺大范围）✓
+     · `prefers-reduced-motion` 时停掉动画（无障碍）✓ */
+@keyframes stFlow {
+  0%   { background-position:   0% 50%; }
+  100% { background-position: 300% 50%; }
+}
+.fr-st-flow {
+  background: linear-gradient(90deg,
+    #000 0%, #fff 12%, #000 25%, #fff 37%, #000 50%,
+    #fff 62%, #000 75%, #fff 87%, #000 100%);
+  background-size: 300% 100%;
+  animation: stFlow 20s linear infinite;   /* ★ 2025：用户裁定「流动速度过快，降速 75%」⇒ 5s → 20s ✓ */
+  opacity: 1;                 /* 流动本身就是"未完成"的视觉信号 ⇒ 不降透明度 */
+  border-left-style: solid;
+  border-color: #888;
+  color: #fff;
+  /* 文字随底色自动取反（黑白流动里这是唯一能一直可读的写法）✓ */
+  mix-blend-mode: difference;
+}
+.fr-st-flow .fr-sub { color: inherit; opacity: .75; }
+@media (prefers-reduced-motion: reduce) {
+  .fr-st-flow {
+    animation: none;
+    background: linear-gradient(90deg, #000 0%, #fff 50%, #000 100%);
+    background-size: 100% 100%;
+  }
+}
+
+/* 窄屏：缩一点，别盖住内容 */
+@media (max-width: 640px) {
+  .float-resets { width: 128px; right: 6px; bottom: 6px; }
+  .fr-btn { padding: 6px 7px; }
+  .fr-btn .fr-sub { display: none; }      /* 小屏只留名字（副标题会换行） */
 }

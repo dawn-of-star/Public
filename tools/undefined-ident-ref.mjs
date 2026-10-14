@@ -133,16 +133,40 @@ for (const f of files) {
     calls.set(n, (calls.get(n) ?? 0) + 1);
   }
 
+  // ⚠️⚠️ 2025 补：**成员访问形状** `NAME.member`（全大写常量）。
+  //   本守卫原来只查 `NAME(` ⇒ 漏掉一整类：把常量当对象用。
+  //   实例（我自己踩的）：`ui.js` 写了 `DE_SPAN.kMax` 但**没 import `DE_SPAN`**
+  //     ⇒ 守卫报"✅ 全项目都对得上"，而 `dom-smoke` 一跑就
+  //       `ReferenceError: DE_SPAN is not defined` ✗
+  //
+  //   ⚠️ **已知盲区（诚实标注，别以为它万能）**：
+  //     本文件靠 `strip()` 去注释/字符串，而 `strip()` 的字符串正则在
+  //     **正则字面量或含引号的注释**面前会失衡、一路吃掉后续行 ⇒
+  //     位于其后的代码**整段看不见**（我实测：`set("span-kmax", String(DE_SPAN.kMax));`
+  //     那一行就被吃掉了，所以这条规则**没抓到**当初那个 bug ✗）。
+  //     ⇒ 真正兜住那类 bug 的是 **`dom-smoke` 真跑一遍**（它会当场 ReferenceError）✓
+  //     这条规则是**额外**的一道网，不是唯一的。
+  const members = new Map();
+  for (const m of src.matchAll(/([A-Z][A-Z0-9_]{2,})\./g)) {
+    const n = m[1];
+    if (imported.has(n) || declared.has(n) || GLOBALS.has(n)) continue;
+    members.set(n, (members.get(n) ?? 0) + 1);
+  }
+
   const bad = [];
   for (const [n, count] of calls) {
     if (hasDefShape(n)) continue;                  // 它自己在本文件里有定义 ⇒ 不是未定义
-    bad.push({ n, count });
+    bad.push({ n, count, kind: "调用" });
+  }
+  for (const [n, count] of members) {
+    if (hasDefShape(n)) continue;
+    bad.push({ n, count, kind: "成员访问" });
   }
   if (!bad.length) continue;
 
   console.log(`\n  ❌ ${f}`);
-  for (const { n, count } of bad) {
-    console.log(`       ${n.padEnd(24)} 调用了 ${count} 次，但既没 import 也没声明`);
+  for (const { n, count, kind } of bad) {
+    console.log(`       ${n.padEnd(24)} ${kind}了 ${count} 次，但既没 import 也没声明`);
   }
   problems += bad.length;
 }

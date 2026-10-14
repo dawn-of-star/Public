@@ -2,7 +2,7 @@
 
 网页增量游戏。原生 ES 模块 + `break_eternity.js`，**零构建、零 npm install**。
 
-当前版本：**0.6.18**
+当前版本：**0.7.1**
 
 > **改完东西只想确认没搞坏？** 跑 `npm test`（或 `node tools/run-all.mjs`）——
 > 一次跑完 47 个自检脚本，只把失败细节打出来。约 4 分钟。
@@ -42,7 +42,7 @@
 | 你想干嘛 | 用什么 | 需要装什么 |
 |---|---|---|
 | **点开就玩（最省事）** | **https://dawn-of-star.github.io/kongxiang-incremental/** | 只需要浏览器 |
-| **下载到本地玩** | Release 里的 `KongxiangIncremental-0.6.18-win-x64.exe` | **什么都不用装**，双击即玩 |
+| **下载到本地玩** | Release 里的 `KongxiangIncremental-0.7.1-win-x64.exe` | **什么都不用装**，双击即玩 |
 | 在本机改着玩 | `node serve.mjs` → http://127.0.0.1:8321/ | Node.js |
 | 改代码 / 自己打包 | 见下面「打包成 exe」 | Node.js + 首次 `npm install` |
 
@@ -160,8 +160,8 @@ npm run dist         # 产出 release/ 下的便携版 exe + zip
 
 | 文件 | 说明 |
 |---|---|
-| `release/KongxiangIncremental-0.6.18-win-x64.exe` | **给玩家的推荐版本**。单个自解压 exe，双击即玩，卸载就是删文件 |
-| `release/KongxiangIncremental-0.6.18-win-x64.zip` | 解压即用的绿色目录。部分杀软会误报自解压包，备一个这个 |
+| `release/KongxiangIncremental-0.7.1-win-x64.exe` | **给玩家的推荐版本**。单个自解压 exe，双击即玩，卸载就是删文件 |
+| `release/KongxiangIncremental-0.7.1-win-x64.zip` | 解压即用的绿色目录。部分杀软会误报自解压包，备一个这个 |
 
 想快速验证打包有没有问题，用 `npm run dist:dir`（只出 `release/win-unpacked/`，几十秒）。
 

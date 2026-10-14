@@ -20,6 +20,8 @@ import {
   computeS, crunchThreshold, infinityPointGain,
   quantumDeGainBonus, quantumDeMultBonus, quantumEntropyMultiplier,
   quantumZpeRequirement, dreamUpgradeEffects,
+  // ★ 2026：量子铸币的收益指数（用户平衡：`^2` → `^1.75`）
+  quantumToIPGain, INFINITY_UPGRADES,
 } from "../src/config.js";
 import {
   conversion, darkEnergyGainPerConversion, darkEnergyMultiplier, effectiveTraps,
@@ -259,6 +261,34 @@ sec("D. 量子 / 无限点");
   ok("D2d q=0 时两个基础加成都为 0",
     quantumDeMultBonus(D(0)).eq(0) && quantumDeGainBonus(D(0)).eq(0),
     `+${quantumDeMultBonus(D(0))} / +${quantumDeGainBonus(D(0))}`);
+}
+
+// D2e. ★ 2026：**量子铸币**（∞ 升级 `ipFromQuantum`）的收益指数
+//
+//   用户平衡裁定：「量子铸币的效果有点过于强了，`^2` 改成 `^1.75` 差不多」
+//   ⇒ 独立复算：`floor(q^1.75)`（**不复用实现里的那条路** —— 用 Math.pow 另算一遍）
+{
+  const mk = (q, bought = true) => ({ infinityFromQuantumBought: bought, peakQuantumRun: D(q) });
+  const cases = [83, 138, 1000];
+  let allOk = true;
+  const det = [];
+  for (const q of cases) {
+    const mine = quantumToIPGain(mk(q)).toNumber();
+    const want = Math.floor(Math.pow(q, 1.75));
+    if (mine !== want) allOk = false;
+    det.push(`q=${q} → ${mine}（独立算 ${want}）`);
+  }
+  ok("D2e 量子铸币 = floor(最大量子数^1.75)", allOk, det.join("｜"));
+  ok("D2e' 指数住在升级定义里（单一数据源）= 1.75",
+    Math.abs(Number(INFINITY_UPGRADES.ipFromQuantum.power) - 1.75) < 1e-12,
+    `power = ${INFINITY_UPGRADES.ipFromQuantum.power}｜desc = 「${INFINITY_UPGRADES.ipFromQuantum.desc}」`);
+  // 零回归：没买这条 ⇒ 恒为 0（不许悄悄给点）
+  ok("D2e'' 没买 ⇒ 恒为 0", quantumToIPGain(mk(1e6, false)).eq(0) && quantumToIPGain(mk(0)).eq(0),
+    `未购买 → ${quantumToIPGain(mk(1e6, false))}｜q=0 → ${quantumToIPGain(mk(0))}`);
+  // ★ 与描述一致性：desc 里的指数必须等于 power（否则又是"显示 ≠ 实发"）
+  const dsc = String(INFINITY_UPGRADES.ipFromQuantum.desc);
+  ok("D2e''' desc 里的指数与 power 一致", dsc.includes(String(INFINITY_UPGRADES.ipFromQuantum.power)),
+    `「${dsc}」`);
 }
 
 // D3. 无限点收益

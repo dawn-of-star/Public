@@ -25,22 +25,36 @@ import Decimal from "../dist/break_eternity.esm.js";
 import { sci } from "./format.js";
 import {
   BASE, BREAK_INFINITY, CRUNCH_AT_LABEL, DE_UPGRADES, DREAM_BY_ID, INFINITY_UPGRADES, INFINITY_ORDER, QUANTUM, REPEATABLE,
-  VOID_UPGRADES, ZPE_ENGINE, crunchThreshold, piecewiseDeCost, dreamUpgradeEffects, infinityPointGain,
+  VOID_UPGRADES, ZPE_ENGINE, crunchThreshold, piecewiseDeCost,
+  // ★ 2025：梦想升级的**等级机制**（首个可重复梦想升级 = 离线时长扩展）
+  dreamUpgradeLevelOf, dreamUpgradeCostAt, dreamUpgradeEffects, infinityPointGain,
   infinityRateMult, infinityStartLog10, infinityUpgradeCost, infinityUpgradeOwned,
   quantumPerPair, quantumStepMult, quantumToIPGain, quantumZpeRequirement,
-  tierMilestonesDone, DE_SPAN, deGrowthRate, deEngineLevelBonus, matterSpanMult, zpeEngineCost, zpeEngineCountFreqUnlocked, matterTotalExponent,
+  tierMilestonesDone, DE_SPAN, deGrowthRate, deEngineLevelBonus, matterSpanMult, zpeEngineCost, epMultCostFor, zpeEngineCountFreqUnlocked, matterTotalExponent,
   zpeEngineAffordableIn, zpeEngineLevel, zpeEngineTotalCost, zpeEngineUnlocked,
   eternityPointGain, canEternity, icIpJumpMult, ipDoubleMult, ipDoubleAffordableIn, ipDoubleCostFor, hasCollapse, INFINITY_CHALLENGES, quantumZpeMultBonus, ETERNITY, COLLAPSE,
   // ★★★ 2025：永恒升级「永恒增幅」（第三层设计稿 33~35 行）——
   //   效果唯一入口 `epMultFactor`（`doEternity` 用它放大 EP 收益）
   //   价格唯一入口 `epMultPriceAt` / `epMultAffordableIn`（`buyEpMult` 用）
   epMultFactor, epMultPriceAt, epMultAffordableIn, ETERNITY_UPGRADES,
+  // ★ 段边界（`buyEpMult` 的增量累加器要用）—— 与 config.js **共用同一套** ✓
+  epMultTierAt,
+  // ★ 买完要清 `epMultAffordableIn` 的短期缓存（性能修复的一部分）✓
+  epMultAffResetCache,
+  // ★ 探针会把**总价**一并缓存 ⇒ 买满直接复用，不必再遍历一遍 ✓
+  epMultAffordableTotal,
   // ★ 2025：页面「曾经解锁过」的永久记录（第一次永恒后保持解锁；见 config.js 的说明）
   markPageUnlocked,
   // ★★★ 2025：永恒成功时要把**全部**页面打点（见 `doEternity` 的说明）
   PAGE_KEYS,
   // ★ 2025：永恒里程碑（设计稿 36~44 行；按永恒次数解锁）
-  hasEternityMilestone } from "./config.js";
+  hasEternityMilestone,
+  // ★★★ 2026：「永恒之后」第一块 = **暗物质 / 第二台相变仪** ——
+  //   购买走 `buyDarkMatter()`；价格与效果各只有一处实现（本组函数）✓
+  //   ⚠️ 落点在 `darkEnergyMultiplier` 的**加法区**（见 `config.js` 的 `darkMatterAdditiveTerm()`），
+  //      不在 `darkEnergyRate`；本文件只负责购买与**速率快照**（见 tick 的 4c 段）✓
+  DARK_MATTER, darkMatterUnlocked, darkMatterCount, darkMatterEffectMult,
+  darkMatterPriceAt, darkMatterCostFor, darkMatterAffordableIn } from "./config.js";
 import {
   D, bigCrunchGain, canBigCrunch, checkDeMilestones, checkQuantumMilestones, checkZpeMilestones, collapseUnlocked,
   clampToAffordable, conversion, darkEnergyGainPerConversion, darkEnergyRate, deUpgradeCost, effectiveTraps,
@@ -243,6 +257,25 @@ function tickBody(state, dt) {
     state.darkEnergyTotal = state.darkEnergyTotal.add(deSelf);
   }
 
+  // ── 4c. ★★ 2026：**第一台相变仪速率的快照**（暗物质机制的输入）──
+  //
+  //   为什么必须存快照、不能现算（完整理由见 `state.js` 的 `v1Log10` 字段说明）：
+  //     `darkEnergyMultiplier` 需要 `v2 = v1^0.01`，而 `v1 = darkEnergyRate()`
+  //     ⇒ 现算会成**环**：`darkEnergyRate → effectiveDarkEnergyGain
+  //        → darkEnergyGainPerConversion → (买了 dm5) → darkEnergyMultiplier → v2 → darkEnergyRate` ✗
+  //     （换用 `zpeRate` 当输入**同样**成环 —— 它经 `globalMultiplier` 又回到 `darkEnergyMultiplier` ✗）
+  //   ⇒ 在这里（本帧的暗能量都算完之后）写一次，供**下一帧**的 `darkEnergyMultiplier` 读 ✓
+  //      与 `zpeFixedMultiplier` 是同一个"快照"手法 ✓
+  //
+  //   ⚠️ 存 **log10**：`Decimal.toNumber()` 在巨量时是 `Infinity`，而 `v1^0.01` 只需要 log10 ✓
+  //   ⚠️ 相变仪未解锁时 `darkEnergyRate()` 返回 0 ⇒ `log10(0) = -Infinity`
+  //      ⇒ 夹成 `-323`（≈ double 最小正规数）；那时效率本就 ≈0 ⇒ 转化值恒 1 ✓
+  {
+    const v1 = state.phaseTransmuterUnlocked ? darkEnergyRate(state) : D(0);
+    const lg = v1.gt(0) ? v1.log10().toNumber() : -323;
+    state.v1Log10 = Number.isFinite(lg) ? lg : -323;
+  }
+
   // ── 5. 里程碑 ──
   for (const m of checkZpeMilestones(state)) {
     pushLog(state, `🏆 达成虚空里程碑：${m.desc}`);
@@ -296,6 +329,10 @@ function tickBody(state, dt) {
   // ── 10. 自动化 ──
   if (state.voidUpgrades.v9) autoAcquire(state);
   autoAcquireDream(state);   // 独立于 v9，见函数注释
+  // ★★★ 2025 **em7**：按"最快无限速度"自动依次完成无限挑战（设计稿第 43 行）✓
+  //   放在这里（自动化段）与 `autoAcquire` 同一类 —— 它是"玩家不用手点"的东西 ✓
+  //   ⚠️ 用 `dt` 累计（不是 wall clock）⇒ 离线结算也会照常推进 ✓
+  icAutoAdvance(state, dt);
 
 
   // ── 11. 捕获的**登记**在 `phaseQuantumCapture` 里完成（写回留到**下一个 tick 的开头** ✓）──
@@ -826,6 +863,14 @@ export function doBigCrunch(state) {
 
   state.infinityPoints = state.infinityPoints.add(ip);
   state.bigCrunchCount = state.bigCrunchCount.add(1);
+  // ★★★ 2025（**em7** 用）：记录**最快一次无限的耗时** = 历次"本轮时长"的最小值 ✓
+  //   设计稿第 43 行：「无限挑战将**基于最快无限速度**自动依次完成」
+  //   ⚠️ 必须在 `resetForCollapse` / 归零**之前**读 `infinityElapsed`（否则读到 0）✗
+  //   ⚠️ 只算"正数"：本轮时长为 0（异常/首帧）不参与最小值，否则最快值会被钉成 0 ✗
+  if (elapsed > 0) {
+    const f = Number(state.fastestInfinitySec ?? 0) || 0;
+    state.fastestInfinitySec = f > 0 ? Math.min(f, elapsed) : elapsed;
+  }
   resetForCollapse(state);
   // ④ 的计时器与实时累计归零：下一次无限从 0 开始重新累计
   state.infinityElapsed = 0;
@@ -892,12 +937,29 @@ function fmtSeconds(sec) {
  */
 export function buyDreamUpgrade(state, id) {
   const d = DREAM_BY_ID[id];
-  if (!d || state.dreamUpgrades[id]) return false;
-  if (state.dreamPoints.lt(d.cost)) return false;
-  state.dreamPoints = state.dreamPoints.sub(d.cost);
-  state.dreamUpgrades[id] = true;
-  pushLog(state, `💭 购买梦想点升级「${d.name}」（消耗 ${d.cost} 梦想点）`);
-  awardDream(state, `dreamUp:${id}`, `梦想点升级「${d.name}」`);
+  if (!d) return false;
+  const lv = dreamUpgradeLevelOf(state, id);
+  // ★ 2025：**可重复**梦想升级（首个是「离线时长扩展」）——
+  //   价格随等级涨（`dreamUpgradeCostAt` 唯一入口），满级后不可再买 ✓
+  const cost = dreamUpgradeCostAt(id, lv);
+  if (cost == null) return false;                 // 已满级 / 一次性已买
+  if (state.dreamPoints.lt(cost)) return false;
+  state.dreamPoints = state.dreamPoints.sub(cost);
+  state.dreamUpgrades[id] = true;                 // 老字段保持"买过"语义（旧档零破坏）✓
+  if (d.repeatable) {
+    state.dreamUpgradeLevels ??= {};
+    state.dreamUpgradeLevels[id] = lv + 1;        // 记等级（唯一数据源）✓
+    pushLog(state, `💭 梦想点升级「${d.name}」升到 Lv${lv + 1}（消耗 ${cost} 梦想点）`);
+  } else {
+    pushLog(state, `💭 购买梦想点升级「${d.name}」（消耗 ${cost} 梦想点）`);
+    // ⚠️⚠️ **成就奖励只给一次性升级** —— 我第一版对所有升级都调，
+    //   于是可重复升级**每次购买都白拿 1 梦想点** ⇒ 第 1 级标价 2 实扣 **1** ✗
+    //   （实测：Lv0 标价 2、实扣 1；Lv1~11 全对 —— 因为 `dreamAwarded` 只发一次，
+    //     而第一次购买恰好就是"差值 1"的那一次）
+    //   ⇒ 可重复升级的折扣会让"标价"与"实扣"永久不一致（本项目最忌讳的显示≠实发）✗
+    //   ⇒ 只在**一次性**升级上发成就 ✓
+    awardDream(state, `dreamUp:${id}`, `梦想点升级「${d.name}」`);
+  }
   return true;
 }
 
@@ -954,7 +1016,7 @@ export function buyInfinityUpgrade(state, id) {
     pushLog(state, `∞ 购买「${cfg.name}」：每次捕获 2 → 3 个量子`);
   } else if (id === "ipFromQuantum") {
     state.infinityFromQuantumBought = true;
-    pushLog(state, `∞ 购买「${cfg.name}」：每次大坍缩额外按本次最大量子数给点（q²）`);
+    pushLog(state, `∞ 购买「${cfg.name}」：每次大坍缩额外按本次最大量子数给点（q^${cfg.power}）`);
   } else if (id === "ipToZpe") {
     state.ipToZpeBought = true;
     pushLog(state, `∞ 购买「${cfg.name}」：ZPE 倍率开始吃无限点数量`);
@@ -1019,28 +1081,144 @@ export function buyEpMult(state, k = null) {
   const before = Math.max(0, Number(state.epMultLevel ?? 0) || 0);
   const cfg = ETERNITY_UPGRADES.epMult;
   if (!cfg) return 0;
+  /**
+   * ★★★ 2025 性能：**总价与探针共用"增量乘法"累加器**。
+   *
+   * 为什么必须共用：原来总价走 `epMultCostFor`（**每级一次 `Decimal.pow`**），
+   *   而探针走增量乘法 ⇒ 大池子（1e10000 ⇒ 5000 级）时买满会在总价那侧
+   *   做 5000 次 `pow` ⇒ 又慢回来 ✗
+   * ⇒ 现在把同一个"逐级累加器"注入给探针 ✓（唯一实现、不可能脱节）
+   *
+   * ⚠️⚠️ **每次需要都必须 `newAccumulator()` 建一个新的** —— 我第一版把累加器
+   *   写成"一个共享的有状态闭包"，结果：
+   *     探针先遍历到第 5000 级 ⇒ 缓存 `curLv=5000`；
+   *     随后买满循环从第 0 级开始取价 ⇒ 缓存**看起来在倒退** ⇒ 增量乘法路径失效、
+   *     且价格被算成**极高** ⇒ 循环第一次就 `break` ⇒ 买满只买到 5000 级，
+   *     而逐级买能得到 **14307 级** ✗（实测差 3 倍，且充值/扣款对不上）
+   *   ⇒ 改成**工厂**：状态只在一次遍历内有效 ✓
+   */
+  const newAccumulator = () => {
+    const M = cfg.costMultTiers;
+    // ★ 段边界用 **config.js 的共用函数**（`epMultTierAt`）——
+    //   这里原来复制了一份"预计算 crossLv"的逻辑，那正是本项目反复出 bug 的病根
+    //   （同一语义两处实现 ⇒ 改一处忘一处 ⇒ 显示≠实发）✗ ⇒ 现在只有一处 ✓
+    let curLv = -1, curSeg = 0, curPrice = null;
+    return (lv) => {
+      if (lv === curLv) return curPrice;
+      const seg = epMultTierAt(lv);
+      if (curPrice && lv === curLv + 1 && seg === curSeg) {
+        curPrice = curPrice.mul(M[curSeg]);              // ★ 增量乘法（热路径）
+      } else {
+        curPrice = epMultPriceAt(lv);
+        curSeg = seg;
+      }
+      curLv = lv;
+      return curPrice;
+    };
+  };
+
+  if (!state.eternityPoints.gte(epMultPriceAt(before))) return 0;
   let want;
+  let total = new Decimal(0);
   if (k == null) {
-    // 买满（闭式）：池子能买几级
+    // ★★★ 2025 性能：**买满直接复用探针的结果（含总价）** ✓
+    //   探针现在**一次遍历同时给出 `k` 和 `total`**（见 `epMultAffordableIn`），
+    //   而 UI 每帧已经先调过探针了 ⇒ 这里通常**命中缓存、零成本** ✓
+    //   原来这里自己再遍历一遍算总价 ⇒ 每帧把那 5000 级算**两遍**（≈12ms/帧 ✗）
     want = epMultAffordableIn(before, state.eternityPoints);
+    // 探针刚被调用 ⇒ 缓存**必然**已按"当前等级 + 当前池子"刷新 ✓
+    //   （若缓存里没有总价（理论上不会），`?? null` 会走下面的自算兜底）
+    const cached = epMultAffordableTotal();
+    if (cached) {
+      total = cached;
+    } else {
+      // 兜底：缓存未命中 ⇒ 自己遍历一次
+      const acc = newAccumulator();
+      for (let i = 0; i < want; i++) total = total.add(acc(before + i));
+    }
   } else {
     want = Math.max(0, Number(k) || 0);
+    if (!(want > 0)) return 0;
+    // 总价 = **逐级真价之和**（同一套累加器）✓
+    //   ⚠️ 2025 修正（用户报「永恒增幅价格消耗不对」）：
+    //      原来用几何闭式 `first·(g^want − 1)/(g − 1)` ⇒ 形状对，但**浮点/Decimal 幂的
+    //      乘积与相除会漂移** ⇒ 实测扣款出现 `488281.0000000004` ✗
+    //   ⚠️ 而且"总价 ≥ 池子就整体拒绝"在**买满**那条路上会造成**不扣钱**：
+    //      探针与这里必须**同一套算法**才不会互相打架 ✓
+    const acc = newAccumulator();
+    for (let i = 0; i < want; i++) total = total.add(acc(before + i));
   }
   if (!(want > 0)) return 0;
-  // 总价：**与 `epMultAffordableIn` 用同一个几何和公式**（等比数列 ⇒ 无浮点漂移）✓
-  //   `first·(g^k − 1)/(g − 1)`　（g = costMult = 5）
-  const g = new Decimal(cfg.costMult);
-  const first = epMultPriceAt(before);
-  const total = first.mul(g.pow(want).sub(1)).div(g.sub(1));
   if (state.eternityPoints.lt(total)) return 0;        // 兜底：探针与总价必须一致
   state.eternityPoints = state.eternityPoints.sub(total);
   state.epMultLevel = before + want;
+  // ★★★ 2025 性能：**买完必须失效 `epMultAffordableIn` 的缓存** ✓
+  //   那个缓存是为了"每帧 2 次调用但池子没变"而加的；买了之后**等级和池子都变了**
+  //   ⇒ 不清就会让 UI 一直显示买之前的可买级数 ✗
+  //   （虽然缓存键里有"等级"和"池子"，理论上会自动失配 —— 但**显式清**更安全：
+  //     若某次购买后等级与池子**恰好**与上次相同（如 `want` 算出 0 的边界情形），
+  //     隐式键就可能命中过期值 ✗）
+  epMultAffResetCache();
   pushLevelLog(state, cfg.name, before, before + want);
   return want;
 }
 
 // ══════════════════════════════════════════════════════════
-// ★ 永恒（手动触发；门槛 = 无限点 1e280，用户指定）
+// ★★★ 2026：「永恒之后」第一块：**暗物质 / 第二台相变仪**
+// ══════════════════════════════════════════════════════════
+// 设计稿原文（第 50~52 行）：
+//   「在暗能量下提供第二个子页面：暗物质
+//     消耗ep获取暗物质，暗物质依赖个数通过第二个相变仪提升第一个相变仪的获取效率
+//     （剩下的还在想）」
+// ⚠️ 用户 2026 **重写**了这条规则（设计稿那句只是雏形）：
+//   ① 暗物质由 **EP 获取** ② 第二台速度 = 第一台的 `^0.01` × 暗物质数量提升
+//   ③ 第二台的转化产出 = **对暗能量的倍率**（落点是 `darkEnergyMultiplier` 的**加法区**）
+//
+// 本函数 = 「消耗 EP 获取暗物质」这一条；
+//   另一半（第二台 → 暗能量倍率）落在 `config.js` 的 `darkMatterAdditiveTerm()`，
+//   由 `formulas.js` 的 `darkEnergyMultiplier()` 加进**加法区**（与 q² 同池）✓
+//
+// ⚠️ 与 `buyEpMult` 同一套纪律（照它写，别自创）：
+//   · 价格**只有一处实现**（`darkMatterPriceAt` / `darkMatterAffordableIn` / `darkMatterCostFor`）
+//     ⇒ 显示与实发不可能脱节 ✓
+//   · 总价 = **逐级真价之和**，**不用几何闭式** —— 本项目已为此踩过两次
+//     （`epMult` 的 `488281.0000000004`；"改首价"时 `ipDouble` 少算 1 级）✗
+//   · 买满与逐级走**同一套**探针 ⇒ "买满 == 逐级实买"是**构造性**成立的 ✓
+//   · ⚠️ **它不随永恒重置**（用户 2026 裁定，见 state.js 的字段说明）⇒
+//      `doEternity` 里**不要**清 `state.eternityDarkMatter` ✓
+
+/**
+ * 买 `k` 个暗物质（`k` 省略 = 买满）。
+ * @returns {number} 实际买到的个数（0 = 未解锁 / 一个都买不起）
+ */
+export function buyDarkMatter(state, k = null) {
+  if (!darkMatterUnlocked(state)) return 0;            // 未达成 em4 ⇒ 未解锁（唯一判据）
+  if (!state?.eternityPoints?.gte) return 0;           // 防御：EP 字段缺失/坏档
+  const before = darkMatterCount(state);
+  if (!state.eternityPoints.gte(darkMatterPriceAt(before))) return 0;  // 连第一个都买不起
+  const want = k == null
+    ? darkMatterAffordableIn(before, state.eternityPoints)
+    : Math.max(0, Math.floor(Number(k) || 0));
+  if (!(want > 0)) return 0;
+  const total = darkMatterCostFor(before, want);       // 逐级真价之和（与探针同源）✓
+  if (state.eternityPoints.lt(total)) return 0;        // 兜底：探针与总价必须一致
+  state.eternityPoints = state.eternityPoints.sub(total);
+  state.eternityDarkMatter = before + want;
+  // 日志走**统一入口** `pushLevelLog` ⇒ 只在跨过关键节点（1/5/10/50/…）时写一条 ✓
+  //   （本项目日志策略：重复购买类升级不许逐级刷屏 —— 见 state.js 的 KEY_LEVELS ✓）
+  pushLevelLog(state, "暗物质", before, before + want);
+  // ★★ 但**效果变化**必须让玩家看见（用户原则：「没有 ui 真的很容易误判」）：
+  //   转化值是暗物质与第二台速度的**乘积**（`min(1,v2/v2Ref)` 那一半可能还没满），
+  //   所以"买了但没涨"是可能发生的 ⇒ 把当前转化值一并写进日志 ✓
+  const eff = darkMatterEffectMult(state);
+  if (Number.isFinite(eff) && eff > 1) {
+    pushLog(state, `⬆ 暗物质转化值 → ×${eff.toFixed(4)}（第二台：${(darkMatterEffectMult(state) - 1).toFixed(4)} 加进暗能量倍率的加法区）`);
+  }
+  return want;
+}
+
+// ══════════════════════════════════════════════════════════
+// ★ 永恒（手动触发；门槛 = 无限点 1e308.25 —— 见 `ETERNITY.goalLog10`）
 // ══════════════════════════════════════════════════════════
 
 /**
@@ -1378,4 +1556,47 @@ export function icCompleteOnCrunch(state) {
   state.ic.active = null;
   pushLog(state, ` 无限挑战 ${k + 1} 通过 ⇒ 无限点跃升一段（×${sci(Decimal.pow(10, INFINITY_CHALLENGES.ipJumpOrders))}）`);
   return { completed: state.ic.completed, jump };
+}
+
+/**
+ * ★★★ 2025 **em7**（设计稿第 43 行）：**基于「最快无限速度」自动依次完成剩余无限挑战**。
+ *
+ * ── 原文与口径 ──
+ *   设计稿：「无限挑战将基于**最快无限速度**自动依次完成 7 次（无视条件）」
+ *   · 用户裁定：关数 **7 → 3**（实际 `INFINITY_CHALLENGES.max = 3`，
+ *     设计稿的 7 是它当时的规划）✓
+ *   · 用户裁定：触发口径 = 「**每过 N 时间自动过一关**」（忠实"最快速度"）✓
+ *
+ * ── N 是什么（"最快无限速度"的定义）──
+ *   `N = state.fastestInfinitySec`（历次"本轮时长"的最小值，见 `doBigCrunch`）
+ *   ⚠️ `N <= 0`（还没有任何一次完整无限）⇒ **不自动完成**（视为未就绪）✓
+ *     否则新档/异常状态下会被瞬间穿完 3 关 ✗
+ *
+ * ── 为什么放在 `tickBody` 里按**累计秒**计，而不是用 `Date.now()` ──
+ *   本项目的时间推进全走传入的 `dt`（离线结算也是）⇒ 用累计秒才能与
+ *   "离线也算"保持一致；用真实时钟会让离线期间**不**触发 ✗
+ *
+ * ── 为什么复用 `icCompleteOnCrunch` 而不自己加奖励 ──
+ *   奖励（IP 跃升 ×10^10）只有那一个入口 ⇒ 自己算一遍必然脱节 ✗
+ *   做法：把 `active` 置为"下一关"，再调它 ⇒ 与手动通关**完全同一条路** ✓
+ *   ⚠️ `icCompleteOnCrunch` 会读 `state.ic.active`，所以顺序是"先置后调" ✓
+ *
+ * @returns {boolean} 本次是否推进了一关（供日志/断言）
+ */
+export function icAutoAdvance(state, dtSec) {
+  // 门槛：em7 达成（第 7 次永恒）
+  if (!hasEternityMilestone(state, "em7")) return false;
+  const done = Number(state.ic?.completed ?? 0) || 0;
+  if (done >= INFINITY_CHALLENGES.max) return false;          // 3 关已全过 ✓
+  const N = Number(state.fastestInfinitySec ?? 0) || 0;
+  if (!(N > 0)) return false;                                 // 未就绪（没有最快记录）✓
+  // 累计计时（离线也走这里，因为 `advance()` 也是喂 dt 给 tick 的）✓
+  state.icAutoTimer = (Number(state.icAutoTimer ?? 0) || 0) + Math.max(0, Number(dtSec) || 0);
+  if (state.icAutoTimer < N) return false;
+  state.icAutoTimer -= N;                                     // 保留余数（不丢时间）✓
+  // ★ 与手动通关**同一条路**：把 active 设成"下一关"再交给唯一的通过函数 ✓
+  state.ic.active = done;
+  icCompleteOnCrunch(state);
+  pushLog(state, `⏱ em7：按最快无限速度自动完成无限挑战 ${done + 1}／${INFINITY_CHALLENGES.max}（每 ${sci(new Decimal(N))} 秒一关）`);
+  return true;
 }

@@ -11,7 +11,10 @@
  *
  * 本工具守三件事（原来就有的）：
  *   1. 公式与 AD 一致（含"门槛处正好 1 点"这条手感基线）；
- *   2. 门槛 = 无限点 1e280（**用户指定提前**于 AD 的 1.79e308；见 config.js 的说明）；
+ *   2. 门槛 = 无限点 **1e308.25**（= AD 的 1.79e308；见 config.js 的 `ETERNITY` 注释）；
+ *      ⚠️ 2026 修正：原来是 1e280（记为"用户指定提前"）—— 但那个常量**同时**是 EP 公式的起点，
+ *         而界面文案 / `docs/` / 本文件都一直写 1e308.25 ⇒ 一处「显示 vs 实际」不符 ✗
+ *         用户裁定「永恒点获取公式中 280 修改成 308.25」⇒ 已统一 ✓
  *   3. ★ 用户指定的差异：永恒层**没有**"到 1e308.25 强制触发"的机制 ——
  *      所以源码里不该出现任何"自动/强制永恒"的调用（用源码守卫钉住）。
  *
@@ -19,8 +22,10 @@
  * 二、永恒里程碑（2025 新增；设计稿 `第三层设计.txt` 第 36~44 行）
  * ══════════════════════════════════════════════════════════
  * 按**永恒次数**解锁。本轮范围（用户指定）：「先做能完整落地的，剩下的先做个占位」
- *   · 完整落地：`em1` 保留 ∞ 升级 · `em3` 量子不再重置 ZPE · `em6` 熵消耗 ÷1.2
- *   · 占位：`em2` `em4` `em5` `em7` `em8`（各带 `pendingWhy`）
+ *   · 已实装：`em1` 保留 ∞ 升级 · `em2` 猫猫加成翻倍 · `em3` 量子不再重置 ZPE
+ *     · `em4` **解锁暗物质 / 第二台相变仪**（见 `docs/DARK-MATTER.md`）· `em5` IP ×(1+log₁₀累计EP)
+ *     · `em6` 熵消耗 ÷1.2 · `em7` IC 自动完成
+ *   · 占位（`pending: true`）：**只剩 `em8`**（永恒自动化页面，设计稿第 44 行）
  *
  * 用法：node tools/eternity-lab.mjs [--check]
  *
@@ -33,13 +38,15 @@ import { join } from "node:path";
 import Decimal from "../dist/break_eternity.esm.js";
 import {
   ETERNITY, eternityPointGain, BREAK_INFINITY,
+  // ★★★ 2026：em4「优化暗能量获取公式」的入口 + S 判据
+  deGainBaseEffectMult, computeS,
   // ── 2025：永恒里程碑 ──
   ETERNITY_MILESTONES, hasEternityMilestone, eternityMilestonesActive, em5IpMult,
   infinityUpgradeOwned, INFINITY_UPGRADES, INFINITY_ORDER, COLLAPSE,
 } from "../src/config.js";
 import { newState } from "../src/state.js";
 import { tick, doEternity } from "../src/engine.js";
-import { conversion, bigCrunchGain } from "../src/formulas.js";
+import { conversion, bigCrunchGain, darkEnergyGainPerConversion } from "../src/formulas.js";
 
 const ROOT = new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
 const pad = (s, n) => String(s).padEnd(n);
@@ -53,11 +60,11 @@ const D = (x) => new Decimal(x);
 //    第一版据此把每一行都判成"不一致"（是测试的锅）。
 //
 // ⚠️⚠️ **门槛要从 `ETERNITY.goalLog10` 取，不能硬编码 308.25** ——
-//    这是本文件的一处**旧红**：门槛被用户提前到 1e280 之后，参考函数里那句
+//    这是本文件的一处**历史旧红**：门槛曾被提前到 1e280，而参考函数里那句
 //    `if (log10ip < 308.25) return null` 就把 280~308 这段判成"不到门槛"，
 //    而实现给的是 1 点 ⇒ 表格与"扫一遍"断言**一直假失败** ✗
-//    （公式常数确实与 AD 一致；**不同的只有门槛**，那是用户指定的差异，
-//      理由见 config.js：280 处 `5^(280/308−0.7) = 1.62 → floor 1`，与 308.25 处同样是 1 点。）
+//    ⇒ 2026 门槛已统一回 308.25（用户裁定，见 config.js），但**仍然从常量取** ——
+//      写死的话，下次再动门槛就会原样重犯 ✓
 const adFormulaLog10 = (log10ip) => {
   if (log10ip < ETERNITY.goalLog10) return null;     // 不到**本项目**的门槛
   const log10ep = (log10ip / 308 - 0.7) * Math.log10(5);
@@ -89,7 +96,7 @@ for (const [label, ip] of rows) {
   console.log(`  ${pad(label, 16)} ${pad(mine.toString(), 16)} ${pad(String(ad), 16)} ${same ? "✅" : "❌"}`);
 }
 console.log();
-console.log(`  门槛（ETERNITY.goalLog10） = ${ETERNITY.goalLog10.toFixed(4)}   （用户指定：提前于 AD 的 1.79e308）`);
+console.log(`  门槛（ETERNITY.goalLog10） = ${ETERNITY.goalLog10.toFixed(4)}   （= AD 的 1.79e308）`);
 console.log(`  除数 ${ETERNITY.divisor}、底数 ${ETERNITY.base}、偏移 ${ETERNITY.offset}` + "   ← 公式常数与 AD 逐项一致");
 
 if (!check) {
@@ -103,18 +110,21 @@ console.log("=".repeat(92));
 console.log("定点断言 · 一、EP 公式");
 console.log("=".repeat(92));
 let fails = 0;
+let ckCount = 0;                 // ★ 断言条数**动态计**（见文件末尾的说明：手写必漂移 ✗）
 const ck = (label, ok, detail) => {
+  ckCount++;
   if (!ok) fails++;
   console.log(`  ${ok ? "✅" : "❌"} ${pad(label, 44)} ${detail}`);
 };
 
-// ⚠️ 这一条**必须比的是用户指定的门槛**（`ETERNITY.goalLog10 = 280`），
-//    不是 `BREAK_INFINITY.maxLog10`（308.2547）。
-//    原来它比的是后者 ⇒ 门槛从 308.25 提前到 280 之后就**一直红着**了 ✗
-//    （理由见 config.js：280 处 floor 同样是 1 点，提前不破坏 AD 同源的曲线。）
-ck("门槛 = 用户指定的 1e280（非物质上限 308.25）",
-  Math.abs(ETERNITY.goalLog10 - 280) < 1e-9,
-  `goalLog10 = ${ETERNITY.goalLog10}｜物质上限 = ${BREAK_INFINITY.maxLog10.toFixed(4)}（两者**刻意不同**）`);
+// ⚠️ 这一条比的是**本项目的门槛常量**（`ETERNITY.goalLog10`），
+//    不是 `BREAK_INFINITY.maxLog10`（308.2547）—— 两者**语义不同**
+//    （永恒门槛 vs 打破无限的阈值），值只差 0.0047 是巧合。
+//    历史：门槛曾被写成 1e280，而这条断言当时比的是 308.25 ⇒ 一直红着 ✗
+//    ⇒ 2026 用户裁定「280 改成 308.25」，两边终于一致 ✓
+ck("门槛 = 1e308.25（对齐 AD 的 1.79e308）",
+  Math.abs(ETERNITY.goalLog10 - 308.25) < 1e-9,
+  `goalLog10 = ${ETERNITY.goalLog10}｜打破无限阈值 = ${BREAK_INFINITY.maxLog10.toFixed(4)}（语义不同，值相近）`);
 ck("不到门槛给 0 点", eternityPointGain(goal.div(10)).eq(0),
   `门槛 −1 阶 → ${eternityPointGain(goal.div(10)).toString()}`);
 ck("★ 门槛处正好给 1 点（AD 的手感基线）", eternityPointGain(goal).eq(1),
@@ -138,10 +148,21 @@ ck("常数与 AD 逐项一致",
 // ★ 差异项：没有强制触发
 {
   const engineSrc = readFileSync(join(ROOT, "src", "engine.js"), "utf8");
-  const forced = /doEternity\s*\(|forceEternity|autoEternity/i.test(engineSrc) &&
-    /tick[\s\S]{0,4000}doEternity/.test(engineSrc);
+  // ⚠️⚠️ 判据必须**只在 `tickBody` 的函数体里**找 `doEternity` ——
+  //   原来写成 `/tick[\s\S]{0,4000}doEternity/`，那会从文件里**第一个** `tick` 开始扫，
+  //   于是只要文件后文**任何位置**（含注释）出现 `doEternity` 就判红 ✗
+  //   （2025 我在 `tickBody` 里加了 `icAutoAdvance`，这条守卫当场**误报**
+  //     "engine.js 里似乎有自动永恒" —— 而实际那一处是 `em7` 的自动**挑战**，不是永恒）
+  //   ⇒ 改成：先定位 `tickBody` 的函数体，再在**体内**查
+  const bodyStart = engineSrc.indexOf("function tickBody(");
+  let body = "";
+  if (bodyStart >= 0) {
+    const end = engineSrc.indexOf("\n}", bodyStart);
+    body = engineSrc.slice(bodyStart, end >= 0 ? end : bodyStart + 6000);
+  }
+  const forced = bodyStart < 0 || /doEternity\s*\(|forceEternity|autoEternity/i.test(body);
   ck("★ 没有「到门槛自动/强制永恒」的调用", !forced,
-    forced ? "engine.js 里似乎有自动永恒" : "engine.js 里查不到自动永恒调用（符合「手动触发」）");
+    forced ? "tickBody 里似乎有自动永恒" : `tickBody 体内查不到自动永恒调用（符合「手动触发」）｜体长 ${body.length} 字符`);
 }
 
 // ══════════════════════════════════════════════════════════
@@ -150,6 +171,7 @@ ck("常数与 AD 逐项一致",
 console.log();
 console.log("=".repeat(92));
 console.log("定点断言 · 二、永恒里程碑（按永恒次数解锁）");
+const epSectionCount = ckCount;   // ★ 一、EP 公式 到此为止的条数（用于末尾的"6 + 12 = 18"式汇总）
 console.log("=".repeat(92));
 console.log(`  已实装：${ETERNITY_MILESTONES.filter((m) => !m.pending).map((m) => m.id).join(", ")}`);
 console.log(`  占位：  ${ETERNITY_MILESTONES.filter((m) => m.pending).map((m) => m.id).join(", ") || "（无）"}`);
@@ -176,7 +198,9 @@ console.log();
   const runs = [1, 2, 3, 4, 5, 9].map((n) => {
     const st = newState();
     st.eternityCount = n - 1;                 // `doEternity` 会 +1 ⇒ 传 n-1
-    st.infinityPoints = D(10).pow(300);       // 满足永恒门槛
+    st.infinityPoints = D(10).pow(ETERNITY.goalLog10);   // ★ 从常量取，**别写死** ——
+    //   原来写死 `pow(300)`（当时门槛 280 够用）⇒ 2026 门槛提到 308.25 后本夹具当场失效，
+    //   连带 ②/②b 两条断言假失败 ✗（写死门槛 = 同一类"显示 vs 实际"的错）
     doEternity(st);
     const keptIds = singles.filter((id) => infinityUpgradeOwned(st, id));
     const expect = Math.floor(n / 2);
@@ -223,6 +247,36 @@ console.log();
     `捕获 ${afterPairs} 对后 ZPE = ${afterZpe > 0 ? "1e" + Math.log10(afterZpe).toFixed(2) : afterZpe}（期望 > 0）`);
 }
 
+// ── ④b ★★★ 2026：em4「**优化暗能量获取公式**」= 相变增幅每级倍率 `1.10 → 1.12` ──
+//
+// 用户 2026 裁定「我选择那个**能减时间最少**的方案」（候选表见 `docs/DARK-MATTER.md` §8-1）。
+// ⚠️ 三条都要守：① 挂载点是 em4（不是全局改数）；② **真的流到实发**（不许只改配置 ✗）；
+//   ③ S 判据在两态都必须 < 1（em4 会把它抬高 —— 这正是要盯的风险）✓
+{
+  const mk = (n) => {
+    const s = newState();
+    s.eternityCount = n;
+    // 给这条升级一个非零等级：否则 `m^0 = 1` ⇒ 两态**看不出差别** ⇒ 断言会假通过 ✗
+    s.deUpgradeLevels = { ...(s.deUpgradeLevels ?? {}), deGainBase: D(10) };
+    return s;
+  };
+  const off = mk(3), on = mk(4);                  // em4 的 need = 4
+  const m0 = deGainBaseEffectMult(off), m1 = deGainBaseEffectMult(on);
+  ck("④b em4 ⇒ 相变增幅每级倍率 1.10 → 1.12",
+    Math.abs(m0 - 1.10) < 1e-12 && Math.abs(m1 - 1.12) < 1e-12,
+    `无 em4 ⇒ ${m0}｜有 em4 ⇒ ${m1}`);
+  // ★ 必须**真的流到实发**（本项目最贵的纪律：改配置 ≠ 改实现）
+  const g0 = darkEnergyGainPerConversion(off), g1 = darkEnergyGainPerConversion(on);
+  const want = Math.pow(1.12 / 1.10, 10);         // 等级 10 ⇒ 比值 = (1.12/1.10)^10
+  const ratio = g0.gt(0) ? g1.div(g0).toNumber() : NaN;
+  ck("④b' 真的流到实发（每级倍率进了转换量）", Number.isFinite(ratio) && Math.abs(ratio - want) < 1e-9,
+    `倍率比 = ${Number.isFinite(ratio) ? ratio.toFixed(6) : ratio}（期望 (1.12/1.10)^10 = ${want.toFixed(6)}）`);
+  // ★ S 判据：em4 会把 `deGainBase` 的 S 贡献从 0.2351 抬到 0.2794 ⇒ 两态都必须 < 1
+  const S0 = computeS(off).S, S1 = computeS(on).S;
+  ck("④b'' S 在两态都 < 1（em4 会把它抬高）", S0 < 1 && S1 < 1 && S1 > S0,
+    `无 em4 ⇒ ${S0.toFixed(6)}｜有 em4 ⇒ ${S1.toFixed(6)}｜余量 ${(1 - S1).toFixed(4)}`);
+}
+
 // ── ④ em6：熵消耗 ÷1.2 ──
 {
   const off = newState();
@@ -262,10 +316,10 @@ console.log();
 
   // 累计量在永恒时**只增不减**（花掉 EP 不该让它掉）
   const st = newState();
-  st.infinityPoints = D(10).pow(300);
+  st.infinityPoints = D(10).pow(ETERNITY.goalLog10);   // ★ 同上：从常量取，不写死
   doEternity(st);
   const first = st.eternityPointsTotal;
-  st.infinityPoints = D(10).pow(300);
+  st.infinityPoints = D(10).pow(ETERNITY.goalLog10);   // ★ 同上：从常量取，不写死
   doEternity(st);
   ck("⑤d 累计 EP 只增不减", first.gt(0) && st.eternityPointsTotal.gt(first),
     `第 1 次 ${first.toString()} → 第 2 次 ${st.eternityPointsTotal.toString()}`);
@@ -287,7 +341,11 @@ console.log();
 
 console.log();
 console.log("=".repeat(92));
-// ⚠️ 数断言条数**别手写**：从 ck() 的调用次数推（我第一版写死"13 条"，加完 em5 就不准了 ✗）
-console.log(`  ${fails === 0 ? `全部通过 ✅（EP 公式 6 条 + 永恒里程碑 12 条 = 18 条断言）` : `${fails} 项失败 ❌`}`);
+// ⚠️ 数断言条数**别手写** —— 我第一版写死"13 条"，加完 em5 就不准了 ✗
+//   ⚠️ 而 2026 我又发现：**注释这么写着、下面那行却仍然是手写的**（"12 条"）⇒ 加完 ④b 三条后又漂了 ✗
+//   ⇒ 现在真的从 `ck()` 的调用次数推 ✓
+console.log(`  ${fails === 0
+  ? `全部通过 ✅（EP 公式 ${epSectionCount} 条 + 永恒里程碑 ${ckCount - epSectionCount} 条 = ${ckCount} 条断言）`
+  : `${fails} / ${ckCount} 项失败 ❌`}`);
 console.log("=".repeat(92));
 process.exit(fails ? 1 : 0);

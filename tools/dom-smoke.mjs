@@ -204,6 +204,15 @@ for (const m of html.matchAll(/<[^>]*\bid="([\w-]+)"[^>]*>/g)) {
   for (const d of tag.matchAll(/\bdata-([\w-]+)="([^"]*)"/g)) {
     el2.dataset[d[1].replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = d[2];
   }
+  // ★★★ 2025：同时解析 `class="..."` 与裸 `disabled` 属性 ——
+  //   原来这两样**都不解析** ⇒ 任何"靠静态 class / disabled 做的断言"都是**假断言** ✗
+  //   （我加悬浮重置窗时撞到：占位按钮的 `.fr-placeholder` 与 `disabled`
+  //     在桩里查不到，`_classes` 空、`disabled` 恒 false）
+  //   ⚠️ 只解析**静态 HTML 里写死**的那一份；运行时通过 `classList` / `el.disabled = …`
+  //     改出来的值走原有逻辑（那部分本来就是对的）✓
+  const cm = tag.match(/\bclass="([^"]*)"/);
+  if (cm) el2.className = cm[1];
+  if (/\sdisabled(\s|>|=)/.test(tag)) el2.disabled = true;
   byId.set(m[1], el2);
   staticIds++;
 }
@@ -743,6 +752,80 @@ let zoneGuard = "未跑";
   }
 
   // ══════════════════════════════════════════════════════════
+  // ★★★ 2025：**全页面悬浮重置窗**（用户要求）
+  // ══════════════════════════════════════════════════════════
+  // 守四件事：
+  //   ① 四个按钮都在（无限/永恒/时空/梦想）✓
+  //   ② 后两个（时空/梦想）**必须禁用** —— 它们是占位，
+  //      若可点会让玩家以为"点了没反应是 bug"✗
+  //   ③ 前两个**真的能触发对应动作**（与页面上按钮同一个 handler）——
+  //      这条是核心：只"画出来"不算做完 ✓
+  //   ④ 折叠按钮真的折叠容器（`.fr-collapsed`）✓
+  {
+    const ids4 = ["fr-btn-infinity", "fr-btn-eternity", "fr-btn-spacetime", "fr-btn-dream"];
+    const exists = ids4.every((id) => byId.get(id));
+
+    // ⚠️ 可用态/禁用态是 **render() 写的** ⇒ 必须先渲染再读，
+    //   否则读到的是 index.html 的静态初值（真按钮初值 = 无 `disabled`、
+    //   但 `renderFloatResets` 还没跑过）⇒ 断言会误判 ✗（我第一版就是这个错）
+    // ⚠️ `Dec` 在上面另一个块里（作用域不到这里）⇒ 本块自己导一次 ✓
+    const { default: DecFR } = await import(new URL("../dist/break_eternity.esm.js", import.meta.url).href);
+    state.brokenInfinity = true;                       // 让"无限"按钮可用
+    state.infinityPoints = new DecFR("1e310");         // 让"永恒"按钮可用（门槛 1e308.25 ⇒ 必须 **≥** 它）
+    for (let i = 0; i < 3; i++) { simNow += 16.67; const fn = rafQueue.shift(); if (fn) fn(simNow); }
+
+    // ✅ 桩现在**会解析静态 `class=` 与裸 `disabled`**（见本文件顶部的种子段）
+    //   ⇒ 这两条可以真断言了 ✓
+    //   ⚠️ 但桩的 `click()` **仍不检查 `disabled`**（它只跑注册过的监听器）⇒
+    //      "点不动"仍由浏览器保证，这里用"**没接 handler**"来验（代码事实）✓
+    const phNoHandler = ["fr-btn-spacetime", "fr-btn-dream"]
+      .every((id) => (byId.get(id)?._handlers?.click ?? []).length === 0);
+    const phMarked = ["fr-btn-spacetime", "fr-btn-dream"]
+      .every((id) => byId.get(id)?._classes.has("fr-placeholder") === true);
+    const phDisabledAttr = ["fr-btn-spacetime", "fr-btn-dream"]
+      .every((id) => byId.get(id)?.disabled === true);
+    // 真按钮**必须**有 handler（否则"画出来但点不动"= 没做完）✓
+    const realHasHandler = ["fr-btn-infinity", "fr-btn-eternity"]
+      .every((id) => (byId.get(id)?._handlers?.click ?? []).length > 0);
+
+    // ③ 真的触发：无限（大坍缩）—— 与页面按钮用**同一个 handler** ✓
+    const crunchesBefore = Number(state.bigCrunchCount ?? 0);
+    byId.get("fr-btn-infinity").click();
+    const crunchesAfter = Number(state.bigCrunchCount ?? 0);
+    // ⚠️ 大坍缩会把 IP 清零 ⇒ 上面的"永恒可用"要在点无限**之前**已经验过 ✓
+    const infFired = crunchesAfter > crunchesBefore;
+
+    // ② 占位按钮点了**不能有任何副作用**（`disabled` + 没接 handler 双保险）
+    const beforePh = { matter: state.resources.matter.toString(), ip: state.infinityPoints.toString(), lv: Number(state.epMultLevel ?? 0) };
+    byId.get("fr-btn-spacetime").click();
+    byId.get("fr-btn-dream").click();
+    const noSideEffect = state.resources.matter.toString() === beforePh.matter
+      && state.infinityPoints.toString() === beforePh.ip
+      && Number(state.epMultLevel ?? 0) === beforePh.lv;
+
+    // ④ 折叠
+    const box = byId.get("float-resets");
+    const minBtn = byId.get("fr-min");
+    byId.get("fr-min").click();
+    const collapsed = box?._classes.has("fr-collapsed") === true;
+    const minLabel = minBtn?.textContent;
+    byId.get("fr-min").click();
+    const expanded = box?._classes.has("fr-collapsed") === false;
+
+    const frOk = exists && phNoHandler && phMarked && phDisabledAttr && realHasHandler
+      && infFired && noSideEffect && collapsed && expanded;
+    console.log(`  悬浮重置窗      ${frOk
+      ? `✅ 四按钮齐（无限/永恒/时空/梦想）｜真按钮**都接了 handler**且无限按钮真的触发大坍缩（${crunchesBefore}→${crunchesAfter}）✓`
+        + `｜占位（时空·梦想）标了 .fr-placeholder + 静态 disabled 属性 + **没接 handler** + 点击无副作用 ✓`
+        + `｜折叠/展开往返 ✓`
+      : `❌ 齐=${exists}｜占位无handler=${phNoHandler}｜占位标记=${phMarked}｜disabled属性=${phDisabledAttr}`
+        + `｜真按钮有handler=${realHasHandler}｜无限触发=${infFired}(${crunchesBefore}→${crunchesAfter})`
+        + `｜占位无副作用=${noSideEffect}｜折叠=${collapsed}｜展开=${expanded}｜标签="${minLabel}"`}`);
+    console.log();
+    if (!frOk) process.exitCode = 1;
+  }
+
+  // ══════════════════════════════════════════════════════════
   // ★ 2025 新增：**① 无限增幅置顶 + 带「买满」**（形态与升级中心一致）
   // ══════════════════════════════════════════════════════════
   {
@@ -919,8 +1002,9 @@ let zoneGuard = "未跑";
     console.log(`  ZPE 买级按钮    ${buyOk ? `✅ 可点且生效（等级 ${lvA} → ${lvB}；IP 被扣）`
       : `❌ 等级 ${lvA} → ${lvB}｜IP ${ipA} → ${st.infinityPoints.toString()}`}`);
 
-    // ── ④ 永恒按钮（同一批；门槛 = 无限点 1e280）──
-    st.infinityPoints = new Dec2(10).pow(300);
+    // ── ④ 永恒按钮（同一批；门槛 = 无限点 1e308.25）──
+    //   ★ 从常量取：原来写死 `pow(300)`（当时门槛 280 够用）⇒ 2026 门槛提到 308.25 后当场失效 ✗
+    st.infinityPoints = new Dec2(10).pow(cfg2.ETERNITY.goalLog10);
     render2(st);
     const etBtn = byId.get("btn-eternity");
     const e0 = Number(st.eternityCount ?? 0);
@@ -1505,7 +1589,9 @@ let zoneGuard = "未跑";
       st3.bigCrunchCount = new Dec2(30);
       st3.voidUpgrades = { ...(st3.voidUpgrades ?? {}), v1: true };
       for (const k of PAGE_KEYS) markPageUnlocked(st3, k);
-      st3.infinityPoints = new Dec2(10).pow(300);          // 满足永恒门槛
+      //   ★ 从常量取：原来写死 `pow(300)`（当时门槛 280 够用）⇒
+      //     2026 门槛提到 308.25 后 `doEternity` 静默不生效，本段三条断言全假失败 ✗
+      st3.infinityPoints = new Dec2(10).pow(cfg3.ETERNITY.goalLog10);
       const beforeKeys = PAGE_KEYS.filter((k) => pageUnlocked(st3, k));
 
       engine2.doEternity(st3);
@@ -1543,11 +1629,36 @@ let zoneGuard = "未跑";
         return tag && String(tag.textContent ?? "").trim() === "锁";
       });
       const badgeOk = badgeLocked.length === 0;
-      const ok = wipedOk && keysOk && tabsOk && badgeOk;
+
+      // ⑥ ★★★ 2025（用户裁定 + 他截图报的 bug）：
+      //   「**包括无限对应的锁定页面删了**吧，bug 还在」
+      //   ⇒ 量子 / 无限 / 永恒三页**不许再有"锁定墙"**（一整屏"你需要 XX / 当前 0"）
+      //   守三件事：
+      //     · 那些锁定元素**不该再存在于 HTML**（删干净了）
+      //     · 内容容器**没有 `hidden`**（常显）
+      //     · 只允许页内**提示条**（`*-hint`）出现，且它**不能**盖住内容
+      //   ⚠️ 判据看 HTML 源码而不是 DOM 属性：断言不该依赖"谁最后写了 hidden" ✓
+      const WALL_IDS = ["q-locked", "inf-locked", "eternity-locked"];
+      const wallsGone = WALL_IDS.every((id) => !html.includes(`id="${id}"`));
+      const CONTENT_IDS = ["q-content", "inf-content", "eternity-content"];
+      // 内容容器在 HTML 里必须**不带** hidden（渲染中也不该把它藏起来）
+      const contentAlwaysOn = CONTENT_IDS.every((id) => {
+        const m = html.match(new RegExp(`<div[^>]*id="${id}"[^>]*>`));
+        return m && !/\bhidden\b/.test(m[0]);
+      });
+      // 提示条自己可以 hidden（它就是"本轮还没到"的说明）✓
+      const hintsExist = ["q-hint", "inf-hint", "eternity-hint"].every((id) => html.includes(`id="${id}"`));
+      // 渲染之后，内容容器仍不能被藏
+      const contentNotHiddenAfterRender = CONTENT_IDS.every((id) => byId.get(id)?.hidden !== true);
+      const wallOk = wallsGone && contentAlwaysOn && hintsExist && contentNotHiddenAfterRender;
+
+      const ok = wipedOk && keysOk && tabsOk && badgeOk && wallOk;
       console.log(`  永恒后页面解锁  ${ok ? `✅ 数值清零 ✓ 解锁记录保留 ✓ ${Object.keys(tabIds).length} 个标签都不上锁、badge 也不显示"锁" ✓`
+        + `｜★量子/无限/永恒的"锁定墙"**已不存在**（0 个）且内容容器常显 ✓`
         : `❌ 数值清零=${wipedOk}${wipedOk ? "" : `（${Object.entries(wiped).filter(([, v]) => !v).map(([k]) => k).join(",")} 没清零）`}` +
           `｜解锁记录=${afterKeys.length}/${PAGE_KEYS.length}｜仍上锁的标签=${lockedTabs.join(",") || "无"}` +
-          `｜badge 显示"锁"的=${badgeLocked.join(",") || "无"}`}`);
+          `｜badge 显示"锁"的=${badgeLocked.join(",") || "无"}` +
+          `｜锁定墙已删=${wallsGone}｜内容常显=${contentAlwaysOn}｜提示条存在=${hintsExist}｜渲染后未被藏=${contentNotHiddenAfterRender}`}`);
       console.log();
       if (!ok) process.exitCode = 1;
     }
@@ -1569,10 +1680,16 @@ let subGuard = "未跑";
   const flyoutOk = /id="tab-flyout-void"[\s\S]{0,400}id="flyout-void-core"[\s\S]{0,400}id="flyout-void-zpe"/.test(html) &&
     /id="tab-flyout-infinity"[\s\S]{0,400}id="flyout-inf-core"[\s\S]{0,400}id="flyout-inf-deep"/.test(html) &&
     /id="tab-flyout-console"[\s\S]{0,500}id="flyout-console-core"[\s\S]{0,500}id="flyout-console-dream"[\s\S]{0,500}id="flyout-console-neko"/.test(html) &&
+    // ★★★ 2026（设计稿第 50 行「在暗能量下提供第二个子页面：暗物质」）：第四组
+    /id="tab-flyout-de"[\s\S]{0,400}id="flyout-de-core"[\s\S]{0,400}id="flyout-de-darkm"/.test(html) &&
     (html.match(/data-tab="zpe"/g) ?? []).length >= 1 &&
     (html.match(/data-tab="infdeep"/g) ?? []).length >= 1 &&
     (html.match(/data-tab="dream"/g) ?? []).length >= 1 &&
-    (html.match(/data-tab="neko"/g) ?? []).length >= 1 && wraps.length >= 10;
+    (html.match(/data-tab="neko"/g) ?? []).length >= 1 &&
+    (html.match(/data-tab="darkm"/g) ?? []).length >= 1 &&
+    // ★★★ 2026：**第五组** = 永恒（永恒本体 ＋ **七巧板** —— 该子页目前只是骨架）
+    /id="tab-flyout-eternity"[\s\S]{0,400}id="flyout-eternity-core"[\s\S]{0,400}id="flyout-eternity-tangram"/.test(html) &&
+    (html.match(/data-tab="tangram"/g) ?? []).length >= 1 && wraps.length >= 20;
   const { activateTab } = await import(new URL("../src/ui.js", import.meta.url).href);
   activateTab("zpe");
   const toZpe = byId.get("panel-zpe")?.hidden === false && byId.get("panel-void")?.hidden === true;
@@ -1585,13 +1702,59 @@ let subGuard = "未跑";
   activateTab("dream");
   const toDream = byId.get("panel-dream")?.hidden === false
     && byId.get("panel-console")?.hidden === true && byId.get("panel-neko")?.hidden === true;
+  // ★★★ 2026：暗能量的子页（暗物质）—— 切过去必须**只**显示它
+  activateTab("darkm");
+  const toDarkm = byId.get("panel-darkm")?.hidden === false
+    && byId.get("panel-de")?.hidden === true && byId.get("panel-quantum")?.hidden === true;
+  // ★★★ 2026：永恒的第二个子页（**七巧板** —— 目前只是骨架）
+  activateTab("tangram");
+  const toTangram = byId.get("panel-tangram")?.hidden === false
+    && byId.get("panel-eternity")?.hidden === true && byId.get("panel-darkm")?.hidden === true;
+  // ══════════════════════════════════════════════════════════
+  // 七巧板版式（用户 2026 指定）：**左右布局** —— 左 = 坐标轴，右 = 巧板托盘**约占 15%**，
+  // 下方 = 拼装挑战。这里把三件事都钉住：
+  //   ① CSS 的右列真的是 15%（用户给的比例；改了这里就该红）
+  //   ② 三条轴（左边缘 / 下边缘 / 主对角线）**都在**，且覆盖率高亮的 dashoffset 是"全长"（看着像没覆盖 ✓）
+  //   ③ 托盘有 **7 个槽位**（经典七巧板的七块）＋ 拼装挑战那一节存在
+  // ⚠️ 只断言"结构在"，**不断言覆盖率数值**（机制未实现 ⇒ 没有真值可断 ✗）
+  // ══════════════════════════════════════════════════════════
+  const tangramRatio = /grid-template-columns:\s*minmax\(0,\s*1fr\)\s*15%/.test(ruleOf(".tangram-wrap"));
+  // ★★ 2026 用户：「加成坐标轴太小了，大小**翻 5 倍**差不多」⇒ 190px → 950px
+  //   ① 名义尺寸必须够大（≥ 760px = 4 倍以上，容一点偏差；写死 950 会把"差不多"钉太死）
+  //   ② ⚠️ 同时必须**没有假装有覆盖率**：三条轴的 `stroke-dashoffset` 仍等于各自全长
+  //      （= 完全不可见）—— 机制没实现就先亮起来才是真 bug ✗
+  const tgSvgW = Number((ruleOf(".tangram-svg").match(/width:\s*min\((\d+)px/) ?? [])[1] ?? 0);
+  const tgNoFakeCov = [
+    ['id="tg-cov-vert"', 100],
+    ['id="tg-cov-horz"', 100],
+    ['id="tg-cov-diag"', 141.42],
+  ].every(([id, full]) => {
+    const at = html.indexOf(id);
+    if (at < 0) return false;
+    const tag = html.slice(at, html.indexOf(">", at));
+    return new RegExp(`stroke-dashoffset="${full}"`).test(tag);
+  });
+  const tangramScale = tgSvgW >= 760 && tgNoFakeCov;
+  // ⚠️ `panelOf` 是下面 emoji 守卫块里的**局部函数**，这个作用域取不到 ⇒ 自带一份
+  const tgPanel = (() => {
+    const start = html.indexOf('id="panel-tangram"');
+    if (start < 0) return "";
+    const next = html.indexOf('class="tab-panel"', start);
+    return html.slice(start, next < 0 ? undefined : next);
+  })();
+  const tgAxes = ["tg-cov-vert", "tg-cov-horz", "tg-cov-diag"].filter((id) => html.includes(`id="${id}"`)).length;
+  const tgSlots = (tgPanel.match(/class="tangram-slot"/g) ?? []).length;
+  const tgChal = /拼装挑战/.test(tgPanel) && html.includes('id="tangram-chal-need"');
+  const tangramLayout = tangramRatio && tangramScale && tgAxes === 3 && tgSlots === 7 && tgChal
+    && /class="tangram-tray"/.test(html);
   // 猫猫子页必须是**两列**（用户裁定：对话功能 ⇒ 左右两列）
   const nekoTwoCol = /class="neko-cols"/.test(html)
     && (html.match(/class="neko-cols"/g) ?? []).length === 1
     && /grid-template-columns:\s*minmax\(0,\s*5fr\)\s*minmax\(0,\s*7fr\)/.test(ruleOf(".neko-cols"));
   activateTab("void");
   const backToVoid = byId.get("panel-void")?.hidden === false && byId.get("panel-zpe")?.hidden === true &&
-    byId.get("panel-infdeep")?.hidden === true && byId.get("panel-neko")?.hidden === true;
+    byId.get("panel-infdeep")?.hidden === true && byId.get("panel-neko")?.hidden === true &&
+    byId.get("panel-darkm")?.hidden === true;
 
   // ★ 浮出层不能被祖先**裁剪**。踩过的坑：`.tabs` 上写了 `overflow-x: auto`，
   //   于是（CSS 规范：一轴非 visible 时另一轴的 visible 会算成 auto）标签条成了滚动容器，
@@ -1611,14 +1774,65 @@ let subGuard = "未跑";
   const flyoutCss = ruleOf(".tab-flyout");
   const flyoutStyle = /position\s*:\s*absolute/.test(flyoutCss) && /z-index\s*:/.test(flyoutCss);
 
-  const ok = flyoutOk && toZpe && toDeep && backToVoid && toNeko && toDream && nekoTwoCol
+  const ok = flyoutOk && toZpe && toDeep && backToVoid && toNeko && toDream && toDarkm && toTangram && nekoTwoCol && tangramLayout
     && clipping.length === 0 && flyoutStyle;
   subGuard = ok
-    ? "✅ 三组悬浮子页（虚空/无限/主控台）；主控台的梦想+猫猫互斥切换正常；猫猫为两列；无祖先裁剪"
+    ? `✅ 五组悬浮子页（虚空/无限/主控台/暗能量/永恒）；主控台的梦想+猫猫互斥、暗能量的暗物质子页、永恒的七巧板子页切换正常；猫猫为两列；七巧板为 15% 右列 + 大坐标轴(${tgSvgW}px) + 三轴 + 7 槽位；无祖先裁剪`
     : `❌ 悬浮入口=${flyoutOk}｜切到 zpe=${toZpe}｜切到 infdeep=${toDeep}｜切回 void=${backToVoid}` +
-      `｜切到 neko=${toNeko}｜切到 dream=${toDream}｜猫猫两列=${nekoTwoCol}` +
+      `｜切到 neko=${toNeko}｜切到 dream=${toDream}｜切到 darkm=${toDarkm}｜切到 tangram=${toTangram}｜猫猫两列=${nekoTwoCol}` +
+      `｜七巧板版式=${tangramLayout}（右列15%=${tangramRatio}｜坐标轴=${tgSvgW}px/无假覆盖率=${tgNoFakeCov}｜三轴=${tgAxes}/3｜槽位=${tgSlots}/7｜挑战节=${tgChal}）` +
       `｜会裁剪的祖先=${clipping.join(",") || "无"}｜浮出层样式=${flyoutStyle}`;
   console.log(`  标签子页        ${subGuard}`);
+  console.log();
+
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2026：**第二台相变仪的动态环**（用户要求：形似第一台的 `de-ring-*`）
+  // ══════════════════════════════════════════════════════════
+  // ⚠️ 为什么必须单独守它：第一台的环（`de-ring-*`）**从来没有任何断言** ⇒
+  //   「它会动」这件事一直没被验证过（也可能是死的，没人知道 ✗）。
+  //   这里给第二台补上 —— 判据是"**随暗能量余额变化**"，而不只是"元素存在" ✓
+  // ⚠️ 桩的 DOM 节点是**共享**的（全页面只有一个 `#darkm-ring-fill`）
+  //   ⇒ 每次 `render` 之后**立刻读**，不能渲染三次再批量读（读到的都是最后一次）✗
+  {
+    const { newState: nsDm } = await import(new URL("../src/state.js", import.meta.url).href);
+    const { render: renderDm } = await import(new URL("../src/ui.js", import.meta.url).href);
+    const { default: DecDm } = await import(new URL("../dist/break_eternity.esm.js", import.meta.url).href);
+    const readT = (id) => (byId.get(id)?.textContent ?? "").trim();
+    const offNow = () => Number(byId.get("darkm-ring-fill")?.style?.strokeDashoffset);
+    /** 造一个"em4 已达成、暗物质解锁"的状态；`deLog` = 暗能量余额的 log10（0 ⇒ 余额=1） */
+    const mkDm = (n, deLog) => {
+      const s = nsDm();
+      s.eternityCount = 4;                      // em4 ⇒ 解锁（唯一判据）
+      s.eternityDarkMatter = n;
+      s.v1Log10 = 3950;                         // 第一台速率快照（实测峰值量级）
+      const de = deLog > 0 ? new DecDm(10).pow(deLog) : new DecDm(1);
+      s.darkEnergy = de;
+      s.darkEnergyTotal = de;
+      return s;
+    };
+    // ⓪ 本轮刚重置（余额 = 1）⇒ 项 = 0 ⇒ 环应为空
+    renderDm(mkDm(4, 0));
+    const p0 = readT("darkm-ring-pct"), o0 = offNow();
+    // ① 余额深到 1e3950（实测峰值量级）、n=4 ⇒ 项约 1.2e10 ⇒ 环过半但未满
+    renderDm(mkDm(4, 3950));
+    const p1 = readT("darkm-ring-pct"), o1 = offNow(), t1 = readT("darkm-ring-progress");
+    // ② n 加大到 122 ⇒ 项撞 `effectCap` ⇒ 环满
+    renderDm(mkDm(122, 3950));
+    const p2 = readT("darkm-ring-pct"), o2 = offNow();
+    const n0 = Number(String(p0).replace("%", "")), n1 = Number(String(p1).replace("%", ""));
+    const n2 = Number(String(p2).replace("%", ""));
+    const okEmpty = p0 === "0%" && Math.abs(o0 - 263.9) < 0.2;
+    const okHalf = n1 > 50 && n1 < 100;
+    const okFull = p2 === "100%" && Math.abs(o2) < 0.2;
+    const moves = o0 > o1 + 100 && o1 > o2;          // 三档**严格单调**在动
+    const progOk = /\d/.test(t1) && t1.includes("/"); // 「项 / 封顶」两段都在
+    const ringOk = okEmpty && okHalf && okFull && moves && progOk;
+    console.log(`  第二台动态环    ${ringOk
+      ? `✅ 随余额动且三档单调（余额 1 → ${p0}@${o0}｜1e3950 → ${p1}@${o1}｜n=122 → ${p2}@${o2}；进度「${t1}」）`
+      : `❌ 空态=${p0}@${o0}（应 0%@263.9）｜过半=${p1}@${o1}（应 >50%）｜满=${p2}@${o2}（应 100%@0）` +
+        `｜单调=${moves}｜进度文本=${JSON.stringify(t1)}`}`);
+    if (!ringOk) process.exitCode = 1;
+  }
   console.log();
 }
 
@@ -1640,14 +1854,21 @@ let subGuard = "未跑";
   // 只匹配真正的 emoji 区段（刻意排除 → U+2192 这类"箭头标点" —— 它是文案写法，不是图标）
   const EMOJI = /[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}\u{2B00}-\u{2BFF}\u{FE0F}]/u;
   // 全部面板都查（回填文案时最容易顺手搬 emoji）
-  const bad = ["panel-void", "panel-zpe", "panel-de", "panel-quantum", "panel-infinity", "panel-eternity"]
+  const bad = ["panel-void", "panel-zpe", "panel-de", "panel-quantum", "panel-infinity", "panel-eternity", "panel-darkm", "panel-tangram"]
     .filter((id) => EMOJI.test(panelOf(id)));
   const okStyle = bad.length === 0;
-  console.log(`  AMOLED 风格    ${okStyle ? "✅ 六个面板正文无 emoji（图标只用 HTML 实体）" : `❌ 面板里出现了 emoji：${bad.join(", ")}`}`);
+  console.log(`  AMOLED 风格    ${okStyle ? "✅ 八个面板正文无 emoji（图标只用 HTML 实体）" : `❌ 面板里出现了 emoji：${bad.join(", ")}`}`);
   console.log();
   if (!okStyle) process.exit(1);
   console.log();
 }
 const guardFailed4 = guardFailed3 || subGuard.startsWith("❌");
 
-process.exit(caught || guardFailed4 ? 1 : 0);
+// ⚠️⚠️ 2026 修 bug：这里原来是 `process.exit(caught || guardFailed4 ? 1 : 0)` ——
+//   它**把上面 20 多处 `process.exitCode = 1` 全盖掉了** ✗
+//   （`process.exit(n)` 显式退码优先于 `process.exitCode`）
+//   ⇒ 后果：那些段落哪怕打印 ❌，本脚本**依然以 0 退出** ⇒ 批跑报"全过" ⇒
+//      **假绿**，而且已经存在了不知道多久（本次改门槛时才发现：
+//      永恒按钮那条明明 ❌，`run-all` 却报 ✅）
+//   ⇒ 改成把 `process.exitCode` 一并纳入判据 ✓
+process.exit(process.exitCode || caught || guardFailed4 ? 1 : 0);

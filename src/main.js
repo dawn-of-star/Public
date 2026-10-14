@@ -21,7 +21,10 @@ import { BASE, DE_MILESTONES, qOf, quantumZpeMultBonus, ETERNITY, eternityPointG
   // ★★★ 2025（`docs/NEKO.md` §6）：动作白名单的清单 + 限流上限
   NEKO_ACTIONS, NEKO_MAX_ACTIONS_PER_TICK,
   // ★ 2025：`has*` 探针要用的 id 表（**白名单不自己抄一份** ✓）
-  REPEATABLE, VOID_UPGRADES, DE_UPGRADES, INFINITY_UPGRADES } from "./config.js";
+  REPEATABLE, VOID_UPGRADES, DE_UPGRADES, INFINITY_UPGRADES,
+  // ★★★ 2025：离线时间上限的**唯一入口** —— 基础 4h + 「离线时长扩展」等级 × 1h ✓
+  //   （原来这里直接读 `BASE.offlineCapSeconds`，两处各读一次 ⇒ 加了升级必然不一致 ✗）
+  offlineCapSeconds } from "./config.js";
 import {
   advance, breakInfinity, buyDeUpgrade, buyDreamUpgrade, buyInfinityUpgrade, buyIpDoubleMax, buyRepeatable, affordableCount, zpeEngineAffordable, tick,
   // ★★★ 2025：永恒升级「永恒增幅」（第三层设计稿 33~35 行）
@@ -33,7 +36,9 @@ import {
   //     `node --check` 只查语法、查不出未定义标识符；而 `dom-smoke` 原来的
   //     `addEventListener` 是空函数 ⇒ 点了什么也不会发生，这类 bug **测不出来** ✗
   //   ⇒ 现在 dom-smoke 会真的派发 click（见那里的 `click()`）并断言状态变化 ✓
-  doBigCrunch, doEternity, unlockZpeEngine, buyZpeEngineLevel } from "./engine.js";
+  doBigCrunch, doEternity, unlockZpeEngine, buyZpeEngineLevel,
+  // ★★★ 2026：获取暗物质（消耗永恒点）
+  buyDarkMatter } from "./engine.js";
 // ★★★ 2025（`docs/NEKO.md` §5）：状态快照要**现算**速率与乘区 ——
 //   必须走引擎/公式的**既有函数**（快照里绝不重算公式 ⇒ 不会与实发脱节 ✓）
 import { entropyRate, matterRate, particleRate, globalMultiplierParts } from "./formulas.js";
@@ -42,6 +47,10 @@ import { newState, pushLog, setLogSink } from "./state.js";
 // ★★★ 2025（`docs/NEKO.md`）：N.E.K.O 接入层（**无宿主时全部 no-op** ✓）
 //   `dispatchNekoActions` = §6 动作白名单的派发器（三条约束都实现在 `neko.js` 里）
 import { createNekoBridge, dispatchNekoActions } from "./neko.js";
+// ★★★ 2025：**性能监视器**（用户报「数字跳动速率及其低下」⇒ 装仪表而不是猜）
+import { perfFrame, perfOn, perfSummary, perfToggle, perfFrames, perfSections } from "./perf.js";
+// ★★★ 2025：**真实 DOM 写入计数** + **构建标记**（区分"代码 bug"与"浏览器旧缓存"）
+import { domWriteStats, domResetStats, UI_BUILD } from "./ui.js";
 import { flashSave, initUI, render, showOfflineBanner } from "./ui.js";
 
 const AUTOSAVE_SECONDS = 15;
@@ -57,9 +66,15 @@ const loaded = load();
 if (loaded) {
   state = loaded.state;
   if (loaded.offlineSeconds > 5) {
-    const capped = Math.min(loaded.offlineSeconds, BASE.offlineCapSeconds);
+    // ★★★ 2025：上限走**唯一入口** `offlineCapSeconds(state)` ✓
+    //   它 = 基础 4 小时 + 已买的「离线时长扩展」等级 × 1 小时
+    //   ⚠️ 原来这里**两处各自**读 `BASE.offlineCapSeconds` ⇒ 加了升级后
+    //      "结算用的上限"与"提示是否被截断用的上限"会不一致 ✗
+    //      （正是本项目反复出现的"同一件事两条路"）
+    const cap = offlineCapSeconds(state);
+    const capped = Math.min(loaded.offlineSeconds, cap);
     advance(state, capped);
-    offlineReport = { seconds: capped, capped: loaded.offlineSeconds > BASE.offlineCapSeconds };
+    offlineReport = { seconds: capped, capped: loaded.offlineSeconds > cap, cap };
   }
   pushLog(state, "检测到历史存档，数据已恢复");
 }
@@ -153,6 +168,19 @@ const handlers = {
     }
   },
   /**
+   * ★★★ 2026（用户 2026 重写的规则）：**获取暗物质**（消耗永恒点）。
+   *
+   * 落点是暗能量倍率的加法区（`darkEnergyMultiplier` 里的 `darkMatterAdditiveTerm`）——
+   * 所以这里只负责买 + 存档 + 重绘；**效果由引擎侧同一函数给出**（显示 == 实发）✓
+   * @param {boolean} max true = 买满（逐级真价之和），false = 买一个
+   */
+  onBuyDarkMatter(max) {
+    if (buyDarkMatter(state, max === true ? null : 1) > 0) {
+      save(state);
+      afterAction();
+    }
+  },
+  /**
    * ★★★ 2025（`docs/NEKO.md` §10）：**使用一个好感度道具**（猫条 / 棒棒糖 / 猫爪）。
    *
    * 走 `useNekoItem`（**唯一入口**）—— 扣款与好感度写入都在那里，这里只负责存档+重绘 ✓
@@ -234,7 +262,7 @@ const handlers = {
       afterAction();
     }
   },
-  /** 永恒：手动触发（门槛 1e280 无限点；奖励暂为占位） */
+  /** 永恒：手动触发（门槛 = 无限点 1e308.25，见 `ETERNITY.goalLog10`） */
   onEternity() {
     if (doEternity(state)) {
       save(state);
@@ -289,6 +317,8 @@ const handlers = {
 
 let lastFrame = performance.now();
 let lastRender = 0;
+/** ★ 2025：上一帧的**真实**时间戳（与节流的 lastRender 不同 —— 它每帧都更新） */
+let lastFrameReal = 0;
 let autosaveAccum = 0;
 let errorCount = 0;
 let lastErrorKey = "";
@@ -339,15 +369,21 @@ const RENDER_INTERVAL_MS = 50;
 function frame(nowMs) {
   // 帧间隔上限 1 秒：标签页切后台回来时不要一次性补太多
   const dt = Math.min((nowMs - lastFrame) / 1000, 1);
+  const frameGap = nowMs - lastFrameReal;      // ★ 真实帧间隔（性能监视器用）
+  lastFrameReal = nowMs;
   lastFrame = nowMs;
 
+  let tickMs = 0, renderMs = 0;
+
   if (dt > 0) {
+    const t0 = performance.now();
     try {
       tick(state, dt);
       state.playTimeMs += dt * 1000;
     } catch (err) {
       reportRuntimeError(err, "tick");
     }
+    tickMs = performance.now() - t0;
 
     autosaveAccum += dt;
     if (autosaveAccum >= AUTOSAVE_SECONDS) {
@@ -377,15 +413,63 @@ function frame(nowMs) {
   // ── 节流渲染 ──
   if (nowMs - lastRender >= RENDER_INTERVAL_MS) {
     lastRender = nowMs;
+    const t0 = performance.now();
+    // ★ 每帧把写入计数清零 —— HUD 显示的就是"**上一帧**真实碰了几次 DOM" ✓
+    if (perfOn()) domResetStats();
     try {
       render(state);
     } catch (err) {
       reportRuntimeError(err, "render");
     }
+    renderMs = performance.now() - t0;
   }
+
+  // ★ 性能监视器：关闭时 `perfFrame` 立刻返回 ⇒ 开销 ≈ 0 ✓
+  perfFrame({ frameMs: frameGap, dtMs: dt * 1000, tickMs, renderMs });
+  if (perfOn()) perfDraw();
 
   // ★ 这一行必须在 try 之外，否则异常会让循环停住
   requestAnimationFrame(frame);
+}
+
+/**
+ * ★★★ 2025：性能监视器的**绘制**（右上角一块小面板；只在打开时跑）。
+ *
+ * ⚠️⚠️ 原来"每 20 帧才更新一次文字"—— 那个想法在 **6fps** 下是**灾难性的误导**：
+ *   20 帧 = **3 秒** ⇒ 用户截图时看到的可能是好几秒前的旧文本，
+ *   于是"我加的行没出现"被误判成"跑的是旧代码" ✗（我为此浪费了好几轮）
+ * ⇒ 改成**每帧都刷**（1 个元素的 textContent，代价可忽略；
+ *   而且它已经在 `perfOn()` 分支里 ⇒ 关掉监视器时完全不跑）✓
+ */
+function perfDraw() {
+  const el = document.getElementById("perf-hud");
+  if (!el) return;
+  el.hidden = false;
+  const s = perfSummary();
+  if (!s) { el.textContent = "性能监视（采样中…）"; return; }
+  const f = (v) => v.toFixed(1);
+  // ★★★ 2025：**分段表 + 真实写入数 + 构建标记** ——
+  //   用户连续两轮 FAQ"HUD 没变" ⇒ 无法区分"代码 bug"与"浏览器旧缓存" ✗
+  //   ⇒ 把构建标记打在 HUD 上，一眼可辨 ✓
+  const secs = perfSections();
+  const secTxt = secs.length
+    ? "\n── render 分段（累计 / max）──\n" +
+      secs.slice(0, 7).map((r) => `${r.label}  ${r.ms.toFixed(0)}ms / ${r.max.toFixed(0)}ms`).join("\n")
+    : "\n（分段表为空 —— 说明跑的**不是**最新 ui.js）";
+  el.textContent =
+    `[${UI_BUILD}]\n` +
+    `FPS ${f(s.fps)}（间隔 ${f(s.frameAvg)}ms，p95 ${f(s.frameP95)}ms）\n` +
+    `tick ${f(s.tickAvg)}ms（max ${f(s.tickMax)}）\n` +
+    `render ${f(s.renderAvg)}ms（p95 ${f(s.renderP95)}，max ${f(s.renderMax)}）\n` +
+    `我们的占用 ${f(s.busyAvg)}ms/帧\n` +
+    `真实 DOM 写入 ${domWriteStats.text + domWriteStats.html + domWriteStats.cls + domWriteStats.bool}` +
+    `（text ${domWriteStats.text} / html ${domWriteStats.html} / cls ${domWriteStats.cls} / bool ${domWriteStats.bool}）\n` +
+    `被去重拦掉 ${domWriteStats.skipped}\n` +
+    (s.browserSide
+      ? "⇒ 瓶颈在**浏览器侧**（样式重算/布局/绘制）"
+      : "⇒ 瓶颈在**我们的 JS**（tick/render）") +
+    `\n样本 ${s.n} 帧` +
+    secTxt;
 }
 
 // ══════════════════════════════════════════════════════════
@@ -403,11 +487,24 @@ try {
 
 requestAnimationFrame(frame);
 
-if (offlineReport) showOfflineBanner(offlineReport.seconds, offlineReport.capped);
+if (offlineReport) showOfflineBanner(offlineReport.seconds, offlineReport.capped, offlineReport.cap);
 
 window.addEventListener("beforeunload", () => save(state));
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") save(state);
+});
+
+/**
+ * ★★★ 2025：`F8` = 性能监视器开关（用户在 Edge 上跑，`performance.now()` 通用 ✓）
+ * ⚠️ 用 `F8` 而不是 `F12`（那是开发者工具，浏览器会吃掉）；也不与游戏内的空格冲突 ✓
+ */
+document.addEventListener("keydown", (e) => {
+  if (e.code === "F8") {
+    e.preventDefault();
+    const on = perfToggle();
+    const hud = document.getElementById("perf-hud");
+    if (hud) hud.hidden = !on;
+  }
 });
 
 // 控制台调试入口
@@ -437,6 +534,15 @@ window.__game = {
   },
   /** 白名单清单（给控制台/文档看） */
   nekoActionList: () => Object.keys(NEKO_ACTIONS),
+  /** ★ 2025：**性能监视器**（`__game.perf(true)` 打开 / `__game.perf()` 切换 / `F8`） */
+  perf: (force) => {
+    const on = perfToggle(force);
+    const hud = document.getElementById("perf-hud");
+    if (hud) hud.hidden = !on;      // 关掉时立刻藏起来（否则留着最后一帧的数字）
+    return on;
+  },
+  perfSummary,
+  perfFrames,
 };
 
 console.log(

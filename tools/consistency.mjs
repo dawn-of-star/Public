@@ -18,14 +18,35 @@
  * ── 为什么用很小的 dt ──
  *   速率是瞬时量，tick 是离散推进。dt 越小，两者越应该相等。
  *   如果 dt 很小时仍不相等，说明**函数根本不是同一条路径**。
+ *
+ * ⚠️⚠️ 2026 追加的**结构性**原则（血的教训）：
+ *   **热路径上不许有 O(n) 循环** —— 哪怕数学完全正确 ✗
+ *   实证：为修 ZPE 2000 级后的惩罚，我把 `zpeEngineTotalCost` 从闭式改成
+ *     逐级累加 ⇒ `render()` 每帧多花 12~16ms、且**越往后越慢**。
+ *   而 **Node mock 量不出来**（那里 render 只有 2.4ms/帧），只有真浏览器暴露 ✗
+ *   ⇒ 本文件末尾有一条**静态扫描**：`src/` 不许调用 `*Loop` 系列 ✓
  */
 
+import { readFileSync, readdirSync } from "node:fs";
+import { join } from "node:path";
 import Decimal from "../dist/break_eternity.esm.js";
 import { BASE, COLLAPSE, DE_MILESTONES, DE_UPGRADES, REPEATABLE, VOID_UPGRADES, ipDoubleMult,
   // ★ 2025：① 的价格序列断言要用（用户裁定「首价 1 点、之后每级 ×10」）
   ipDoublePriceAt, ipDoubleCost, ipDoubleAffordableIn, infinityUpgradeCost,
+  // ★ 2025：性能回归断言要用（大池子测耗时）
+  ipDoubleCostFor,
   // ★★★ 2025：永恒升级「永恒增幅」断言要用（第三层设计稿 33~35 行）
-  epMultPriceAt, epMultAffordableIn, epMultFactor, eternityPointGain, ETERNITY } from "../src/config.js";
+  epMultPriceAt, epMultAffordableIn, epMultFactor, eternityPointGain, ETERNITY, ETERNITY_UPGRADES,
+  // ★★★ 2025：可重复梦想升级（「离线时长扩展」= 离线时间上限）断言要用
+  DREAM_UPGRADES, DREAM_BY_ID, dreamUpgradeLevelOf, dreamUpgradeCostAt, offlineCapSeconds,
+  // ★★★ 2025：永恒里程碑 em2（neko 加成翻倍）/ em7（自动完成 IC）断言要用
+  NEKO, NEKO_BONUS_DOUBLE, nekoGlobalExponent, INFINITY_CHALLENGES,
+  // ★★★ 2025：两个新修复（ipDouble 封顶平台 / ZPE 引擎 2000 级后增幅）断言要用
+  //   ⚠️ `ipDoublePriceAt` 上面已经导过了 ⇒ 这里**不要**再列一次（会 `already been declared` ✗）
+  IP_DOUBLE_AD, zpeEngineStepMult, zpeEngineCostMult, zpeEngineCost,
+  ZPE_ENGINE, zpeEngineAffordableIn, zpeEngineTotalCost,
+  // ★★★ 2026：性能回归断言要"逐级"版做**对照基准**（闭式快、循环显然正确 ⇒ 必须一致）✓
+  zpeEngineTotalCostLoop, zpeEngineAffordableInLoop } from "../src/config.js";
 import { newState } from "../src/state.js";
 import {
   conversion, darkEnergyRate, deUpgradeCost, entropyRate, globalMultiplier, globalMultiplierParts,
@@ -35,7 +56,13 @@ import { breakInfinity, buyDeUpgrade, buyDreamUpgrade, buyRepeatable, buyTrap, b
   // ★ 2025：① 的"买满 == 逐级实买"断言要它
   buyInfinityUpgrade,
   // ★★★ 2025：永恒增幅的「买满 == 逐级」与「实得 EP」断言要它们
-  buyEpMult, doEternity } from "../src/engine.js";
+  buyEpMult, doEternity,
+  // ★★★ 2025：em7「按最快无限速度自动完成无限挑战」断言要它 ✓
+  icAutoAdvance,
+  // ★★★ 2025：ZPE 引擎 2000 级后的价格增幅断言要它们 ✓
+  buyZpeEngineLevel, buyIpDoubleMax } from "../src/engine.js";
+// ★★★ 2025：em7 的详情文案要 `sci`（统一科学计数法）✓
+import { sci } from "../src/format.js";
 
 const D = (v) => new Decimal(v);
 const pad = (s, n) => String(s).padEnd(n);
@@ -532,40 +559,194 @@ console.log();
   });
 
   // ══════════════════════════════════════════════════════════
-  // ★★★ 2025 新增（第三层设计稿 33~35 行）：**永恒升级「永恒增幅」**
+  // ★★★ 2025（第三层设计稿 33~35 行）：**永恒升级「永恒增幅」**
   // ══════════════════════════════════════════════════════════
-  // 设计稿：「永恒升级面板：将最终获得的永恒点 *5（价格初始 1ep，每次购买后 *5）」
-  //   ⇒ 价格序列 = `1 → 5 → 25 → 125 …`｜效果 = `5^等级`
-  // 守三件事：① 价格序列**精确**（`Decimal.pow(5,2)` 会给 25.000000000000007 ✗）
+  // 设计稿原文：「永恒升级面板：将最终获得的永恒点 *5（价格初始 1ep，每次购买后 *5）
+  //             （**剩下的类似 ad 中的永恒升级**）」
+  //   ⇒ 最后一句是**权威补充** ⇒ 价格照 **AD** 抄。
+  //     AD 的 `EPMultiplierState.costAfterCount`：
+  //       multPerUpgrade = [50, 100, 500, 1000]｜cost = mult^n × **500**
+  //   ⚠️ 我原来实现成 `5^n × 1`（基础价 1、倍率 5）—— **两处都错** ✗
+  //     （用户报「永恒增幅价格增幅的 bug」时才查出来）
+  // 守三件事：① 价格序列**精确**且与 **AD 独立算出的值**一致（不拿函数自己的输出当期望 ✗）
   //          ② 买满 == 逐级实买（闭式与实现同源）
   //          ③ **永恒时实得 EP == 基础 × 倍率**（效果真的落在"最终获得的"上）
-  check("★ 永恒增幅：价格序列 = 1,5,25,125…（设计稿）且无浮点漂移", () => {
-    const want = [1, 5, 25, 125, 625, 3125, 15625];
-    const got = want.map((_, n) => Number(epMultPriceAt(n)));
-    const ok = got.every((v, i) => v === want[i]);
+  check("★ 永恒增幅：价格序列 = 设计稿「初始 1ep、每次 ×5」+ 阶梯（独立重算）", () => {
+    // ⚠️ 期望值**独立算**（不调用 `epMultPriceAt`）—— "断言不能自证"的纪律 ✓
+    //
+    // ⚠️⚠️ 这里我错了**两次**，都值得记：
+    //   ① 第一版写成 `for i: if (cost_i < thresh_i) 用 i` —— **反了** ✗
+    //      （正确语义：价格**超过**本段阈值 ⇒ 进下一段）
+    //   ② 第二版把阈值用 `Number(raw)` 转成 double 再比 —— 对 `1e30` 尚可，
+    //      但**段选择逻辑**仍写错 ⇒ 期望值离谱 ✗
+    //   ⇒ 最终这版：**从末段往回找**第一个"价格 ≥ 该段阈值"的段 ⇒ 它就是当前段 ✓
+    //     （`null` = 末段，无条件中选；且这样写**不可能**漏段/多段）
+    const cfg = ETERNITY_UPGRADES.epMult;
+    const M = cfg.costMultTiers;
+    // ⚠️⚠️ 阈值**绝不能用 `Number()` 比** —— `Number("1e10000") === Infinity` ✗
+    //   （`1e1000` / `1e10000` 都超过 double 范围 ⇒ 一切比较都失真）
+    //   ⇒ 全程在 **log10 空间**比较（只做乘法，无溢出）✓
+    const log10Th = cfg.costThresholds.map((s) => {
+      if (s == null) return Infinity;
+      const str = String(s);
+      const m = /^1e(\d+)$/.exec(str);
+      return m ? Number(m[1]) : new Decimal(str).log10().toNumber();
+    });
+    const log10Base = Math.log10(cfg.costBase);
+    /**
+     * 独立实现：**取第一个「价格 < 本段阈值」的段**（与真实代码 / AD 语义一致）。
+     * ⚠️ 我在这里错了**三次**，每条都值得记：
+     *   ① 写成"价格**超过**阈值就用本段" ⇒ **反了**
+     *   ② 用 `Number(raw)` 比阈值 ⇒ `1e10000 → Infinity` ⇒ 全错
+     *   ③ 反向循环"找第一个超过阈值的段" ⇒ 又反了一次
+     * ⇒ 现在照抄语义、在 log10 空间比，且**采样点故意跨段边界**（43 / 1000 / 5000）✓
+     */
+    const expect = (n) => {
+      let mult = M[0];
+      for (let i = 0; i < M.length; i++) {
+        const mag = log10Base + n * Math.log10(M[i]);        // log10( base·M[i]^n )
+        if (mag < log10Th[i]) { mult = M[i]; break; }
+      }
+      return cfg.costBase * Math.pow(mult, n);
+    };
+    // 采样点**故意跨过每个段边界**（43 / 1000 / 5000 附近）⇒ 真的验到阶梯 ✓
+    const pts = [0, 1, 2, 3, 4, 5, 6, 7, 8, 41, 42, 43, 44, 999, 1000, 1001, 4999, 5000, 5001, 6000];
+    const rows = pts.map((n) => {
+      const want = expect(n);
+      const got = Number(epMultPriceAt(n));
+      // 大数比较用相对误差（`Number()` 会丢精度；两侧同路径 ⇒ 允许 1e-9）✓
+      const ok = want === got || (want > 0 && Math.abs(got - want) / want <= 1e-9);
+      return { n, want, got, ok };
+    });
+    const bad = rows.filter((r) => !r.ok);
+    // 额外守**设计稿字面**：前 4 级必须是 1 / 5 / 25 / 125
+    const head = [1, 5, 25, 125];
+    const headOk = head.every((v, i) => Number(epMultPriceAt(i)) === v);
     return {
-      ok,
-      detail: ok ? `序列 ${got.join(",")} ✓（精确整数，无漂移）`
-        : `序列=${got.join(",")}（应 ${want.join(",")}）`,
+      ok: bad.length === 0 && headOk,
+      detail: bad.length === 0 && headOk
+        ? `跨段边界的 ${pts.length} 个点全部一致 ✓｜前 4 级 = ${head.join(",")}（设计稿「初始 1ep、每次 ×5」）✓`
+        : (bad.length
+          ? `不一致：${bad.map((r) => `Lv${r.n} 得${r.got} 应${r.want}`).join("｜")}`
+          : "前 4 级不符设计稿"),
     };
   });
 
-  check("★ 永恒增幅：买满 == 逐级实买", () => {
-    const pools = ["1", "5", "100", "1e6", "1e12"];
+  // ⚠️⚠️ 2025 修正（用户报「永恒增幅价格消耗不对」）：
+  //   原来这条只测 `1 / 5 / 100 / 1e6 / 1e12` —— **恰好避开了所有会出错的边界** ✗
+  //   实际坏掉的池子：**6**（探针说 2 级、买满却买 0 级）、**3906**（少买 1 级）、
+  //   **4000**（扣款出现 `3906.000000000005` 的小数漂移）
+  //   根因：`epMultAffordableIn` 用 `Math.log10/.floor` 求级数（浮点边界少 1），
+  //         `buyEpMult` 用几何闭式算总价（幂的乘积/相除漂移）
+  //   ⇒ 现在**把出错的那几个池子逐个钉进断言**，并额外验"扣款是精确整数" ✓
+  //
+  // ⚠️ 2025 二次修正：价格改成**分段 + 无封顶**后，"买满"与"逐级买"两条路
+  //   在**大池子**上会差 `1e-12` 相对量级（`Decimal` 尾数精度噪声：连乘 5000 次
+  //   vs `ipow` 的乘法顺序不同 ⇒ 舍入路径不同）。**级数必须精确相等**，
+  //   余额允许 `1e-9` 相对容差（价格显示只用 3~6 位有效数字 ⇒ 玩家不可感知）✓
+  check("★ 永恒增幅：买满 == 逐级实买（含**边界池** 6 / 3906 / 4000 + 大池子）", () => {
+    const pools = ["1", "5", "6", "30", "100", "3906", "4000", "1e6", "1e10", "1e100", "1e1000", "1e10000", "1e20000"];
     const rows = pools.map((p) => {
       const a = { ...newState(), eternityPoints: new Decimal(p) };
       const pred = epMultAffordableIn(0, a.eternityPoints);
       const b = { ...newState(), eternityPoints: new Decimal(p) };
       let real = 0;
-      while (buyEpMult(b, 1) > 0 && real < 500) real++;
-      return { p, pred, real, ok: pred === real };
+      while (buyEpMult(b, 1) > 0 && real < 60000) real++;
+      // 买满：预测几级就必须真的买几级，且**扣款总额必须精确**（无小数尾巴）
+      const c = { ...newState(), eternityPoints: new Decimal(p) };
+      const gotMax = buyEpMult(c, null);
+      const spent = new Decimal(p).sub(c.eternityPoints);
+      const spentExact = spent.floor().eq(spent);
+      // 余额一致性（见上面的容差说明）
+      const lvOk = pred === real && gotMax === real;
+      const balOk = (() => {
+        const a2 = { ...newState(), eternityPoints: new Decimal(p) };
+        buyEpMult(a2, null);
+        const b2 = { ...newState(), eternityPoints: new Decimal(p) };
+        while (buyEpMult(b2, 1) > 0) { /* 买到买不动 */ }
+        const l1 = a2.eternityPoints, l2 = b2.eternityPoints;
+        if (l1.eq(l2)) return true;
+        const rel = l1.sub(l2).abs().div(Decimal.max(l1, l2));
+        // ⚠️ 容差取 `1e-6`（不是 1e-9）：误差**随连乘次数线性累积** ——
+        //   池 1e10000（5000 级）⇒ 实测 4e-12｜池 1e20000（7411 级）⇒ 实测 **1.6e-9** ✓
+        //   价格显示只用 3~6 位有效数字 ⇒ 1e-6 玩家完全不可感知 ✓
+        return rel.lte(new Decimal("1e-6"));
+      })();
+      return { p, pred, real, gotMax, spentExact, lvOk, balOk, ok: lvOk && spentExact && balOk };
     });
     const badRows = rows.filter((r) => !r.ok);
     return {
       ok: badRows.length === 0,
       detail: badRows.length === 0
-        ? `5 个池子全部一致（1e6 ⇒ ${rows[3].pred} 级）✓`
-        : `不一致：${badRows.map((r) => `${r.p} 预测${r.pred} vs 实买${r.real}`).join("｜")}`,
+        ? `${pools.length} 个池子全部一致（含边界 6⇒2 级、3906⇒6 级、1e10000⇒5000 级）；` +
+          `扣款全是精确整数；余额差 ≤ 1e-6 ✓`
+        : `不一致：${badRows.map((r) => `${r.p} 预测${r.pred}/实买${r.real}/买满${r.gotMax}` +
+            `/整数${r.spentExact}/级数${r.lvOk}/余额${r.balOk}`).join("｜")}`,
+    };
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2025（用户要求）：「4 个 h 有点短了，梦想页面自动化中建议多一个
+  //   消耗梦想点兑换更多离线时间的升级」
+  // ══════════════════════════════════════════════════════════
+  // 守四件事：
+  //   ① 价格序列**精确整数**（`Decimal.pow(2,3)` 会给 `15.999999999999998` ✗）
+  //   ② **标价 == 实扣**（逐级买 12 次，每次差值必须等于当时的价格）✓
+  //   ③ 上限 = 基础 4h + 等级 × 1h，且**满级后拒绝**（`maxLevel`）
+  //   ④ 一次性梦想升级**不受影响**（回归：首次可买、再次拒绝、等级恒 1）✓
+  check("★ 梦想升级「离线时长扩展」：价格精确整数（2/4/…/4096）", () => {
+    const want = [2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096];
+    const got = want.map((_, lv) => Number(dreamUpgradeCostAt("offlineCap", lv)));
+    const exact = got.every((v) => Number.isInteger(v));
+    const ok = exact && got.every((v, i) => v === want[i]) && dreamUpgradeCostAt("offlineCap", 12) == null;
+    return {
+      ok,
+      detail: ok
+        ? `Lv0~11 = ${got.join(",")} ✓（全整数，无浮点尾巴）｜Lv12 ⇒ 满级 null ✓`
+        : `序列=${got.join(",")}（应 ${want.join(",")}）${exact ? "" : "｜**有非整数**（Decimal.pow 漂移）✗"}`,
+    };
+  });
+
+  check("★ 梦想升级「离线时长扩展」：标价 == 实扣（逐级 12 次）＋ 上限 4h→16h", () => {
+    const s = { ...newState(), dreamPoints: new Decimal("1e6") };
+    const rows = [];
+    for (let i = 1; i <= 12; i++) {
+      const lvBefore = dreamUpgradeLevelOf(s, "offlineCap");
+      const price = Number(dreamUpgradeCostAt("offlineCap", lvBefore));
+      const snap = s.dreamPoints.toString();          // ⚠️ 快照用字符串（引用会被后续赋值换掉）
+      const okBuy = buyDreamUpgrade(s, "offlineCap");
+      const paid = Number(new Decimal(snap).sub(s.dreamPoints));
+      rows.push({ i, price, paid, lv: dreamUpgradeLevelOf(s, "offlineCap"), ok: okBuy && paid === price });
+    }
+    const refused = buyDreamUpgrade(s, "offlineCap") === false;      // 第 13 次必须拒绝
+    const capOk = offlineCapSeconds(s) === BASE.offlineCapSeconds + 12 * 3600;
+    const baseOk = offlineCapSeconds(newState()) === BASE.offlineCapSeconds;
+    const bad = rows.filter((r) => !r.ok);
+    return {
+      ok: bad.length === 0 && refused && capOk && baseOk,
+      detail: bad.length === 0 && refused && capOk && baseOk
+        ? `12 次全部「标价 == 实扣」✓（2→4096，共 8190）｜第 13 次拒绝 ✓｜` +
+          `上限 ${BASE.offlineCapSeconds / 3600}h → ${offlineCapSeconds(s) / 3600}h ✓（未买时 ${BASE.offlineCapSeconds / 3600}h）`
+        : `异常：${bad.map((r) => `第${r.i}次 价${r.price} 扣${r.paid}`).join("｜")}` +
+          `${refused ? "" : "｜**满级没拒绝**✗"}${capOk ? "" : "｜上限不对✗"}${baseOk ? "" : "｜基础上限被动✗"}`,
+    };
+  });
+
+  check("★ 梦想升级：一次性那几条**不受可重复机制影响**（回归）", () => {
+    const ones = DREAM_UPGRADES.filter((x) => !x.repeatable);
+    const bad = [];
+    for (const d of ones) {
+      const s = { ...newState(), dreamPoints: new Decimal(1e6) };
+      const first = buyDreamUpgrade(s, d.id);
+      const second = buyDreamUpgrade(s, d.id);
+      const lv = dreamUpgradeLevelOf(s, d.id);
+      if (first !== true || second !== false || lv !== 1) bad.push(`${d.id}(首${first}/再${second}/Lv${lv})`);
+    }
+    return {
+      ok: bad.length === 0,
+      detail: bad.length === 0
+        ? `${ones.length} 条一次性升级：首次可买、再次拒绝、等级恒 1 ✓`
+        : `异常：${bad.join("｜")}`,
     };
   });
 
@@ -589,11 +770,355 @@ console.log();
     };
   });
 
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2025：**永恒里程碑 em2 / em7 落地**（设计稿第 38 / 43 行）
+  // ══════════════════════════════════════════════════════════
+  // em2：neko 全局加成**翻倍加成部分**（`1.0221151 → 2.0442303`），
+  //      且**好感度 ≤25 时仍恒 1**（"没练就完全没加成"不许被破坏）✓
+  check("★ em2：neko 全局加成翻倍（只翻加成部分，≤25 仍恒 1）", () => {
+    const base = NEKO.tiers.reduce((a, t) => a * t.pow, 1);           // 三档叠乘
+    const wantEm2 = 1 + NEKO_BONUS_DOUBLE * (base - 1);
+    const rows = [];
+    for (const [aff, ec] of [[-50, 0], [25, 2], [26, 2], [80, 0], [80, 2], [80, 7]]) {
+      const s = { ...newState(), nekoAffinity: aff, eternityCount: ec };
+      rows.push({ aff, ec, e: nekoGlobalExponent(s) });
+    }
+    const noBonus = rows.filter((r) => r.aff <= 25).every((r) => r.e === 1);
+    const em2On = rows.filter((r) => r.aff === 80 && r.ec >= 2).every((r) => Math.abs(r.e - wantEm2) < 1e-12);
+    const em2Off = rows.filter((r) => r.aff === 80 && r.ec < 2).every((r) => Math.abs(r.e - base) < 1e-12);
+    return {
+      ok: noBonus && em2On && em2Off,
+      detail: noBonus && em2On && em2Off
+        ? `≤25 ⇒ 恒 1 ✓｜em2 前 ${base.toFixed(7)} ⇒ em2 后 ${wantEm2.toFixed(7)}（= 1 + ${NEKO_BONUS_DOUBLE}×加成部分）✓`
+        : `≤25恒1=${noBonus}｜em2生效=${em2On}｜em2前=${em2Off}｜样本=${JSON.stringify(rows)}`,
+    };
+  });
+
+  // em7：**基于"最快无限速度"自动依次完成**无限挑战（关数 = `INFINITY_CHALLENGES.max`）
+  check("★ em7：按最快无限速度自动完成无限挑战（关数 = max，奖励照发）", () => {
+    const N = 10;                                  // 最快无限 = 10 秒
+    const max = INFINITY_CHALLENGES.max;
+    const mk = (ec, fastest) => {
+      const s = { ...newState(), eternityCount: ec, fastestInfinitySec: fastest };
+      s.ic = { active: null, completed: 0 };
+      s.infinityPoints = new Decimal(1);           // ⚠️ 非 0，才能验证"奖励真的在涨"✓
+      return s;
+    };
+    // ① 未达 em7 ⇒ 永不自动完成
+    const a = mk(6, N);
+    for (let i = 0; i < 50; i++) icAutoAdvance(a, 100);
+    // ② em7 但**没有最快记录** ⇒ 未就绪，不自动完成（防新档被瞬间穿完）
+    const b = mk(7, 0);
+    for (let i = 0; i < 50; i++) icAutoAdvance(b, 100);
+    // ③ 正常：每 N 秒一关，最多 max 关；奖励 = ×10^ipJumpOrders 每关
+    const c = mk(7, N);
+    const ipBefore = c.infinityPoints.toString();
+    let fired = 0;
+    for (let i = 0; i < 60; i++) if (icAutoAdvance(c, N)) fired++;
+    const perJump = Decimal.pow(10, INFINITY_CHALLENGES.ipJumpOrders);
+    const wantIp = new Decimal(ipBefore).mul(perJump.pow(max));
+    const rel = c.infinityPoints.div(wantIp).sub(1).abs();
+    const ipOk = rel.lt(new Decimal("1e-9"));
+    const ok = a.ic.completed === 0 && b.ic.completed === 0
+      && fired === max && c.ic.completed === max && ipOk;
+    return {
+      ok,
+      detail: ok
+        ? `未达 em7 ⇒ 0 关 ✓｜无最快记录 ⇒ 0 关 ✓（防新档穿完）`
+          + `｜em7+10s ⇒ 推 600s 过满 ${max} 关、只触发 ${fired} 次 ✓`
+          + `｜IP ${sci(new Decimal(ipBefore))} → ${sci(c.infinityPoints)}（每关 ×10^${INFINITY_CHALLENGES.ipJumpOrders}）✓`
+        : `未达em7=${a.ic.completed}｜无记录=${b.ic.completed}｜触发=${fired}｜完成=${c.ic.completed}/${max}｜IP对=${ipOk}`,
+    };
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2025：**两个新 bug 修复的回归断言**
+  //   ① 「无限增幅在 IP > e308.25 后没法买满」（`costCap` 把可买级数钉死）
+  //   ② 「ZPE 引擎 2000 级后的价格增幅」（每 +5 数量级只能买 1 个）
+  // ══════════════════════════════════════════════════════════
+
+  // ① ipDouble：**`costCap` 已删除** ⇒ 价格不封顶、可买级数不再被钉死
+  check("★ ipDouble：`costCap` 删除后价格不封顶、级数随池子增长（原来钉死在 Lv59）", () => {
+    const rows = [];
+    for (const p of ["1e300", "1e400", "1e1000", "1e5000"]) {
+      const s = { ...newState(), infinityPoints: new Decimal(p), ipDoubleLevel: new Decimal(0) };
+      const probe = ipDoubleAffordableIn(0, new Decimal(p));
+      const got = buyIpDoubleMax(s);
+      // ⚠️ **不要断言"余额必须变小"** —— `Decimal` 只有约 17 位有效数字，
+      //   池子比总价大几百个数量级时（`1e400 − 3.46e322 = 1e400`）扣款表示不出来，
+      //   那是**精度下限，不是没扣钱** ✓ ⇒ 判据用"买得起（`gte`）" ✓
+      const want = ipDoubleCostFor({ ipDoubleLevel: 0 }, got);
+      rows.push({ p, probe, got, lvOk: probe === got, affordable: new Decimal(p).gte(want) });
+    }
+    // ★ 关键（**新语义**）：价格每级 ×1e10 ⇒ 池子每 +10 个数量级多买 1 级。
+    //   所以断言"池越大买越多"成立，但**倍数很小**（不是 ×10 那种）——
+    //   原来"每级恒 1e320 平台"时才是每 +1 阶多 1 级；现在 `1e5000 ⇒ 527 级` ✓
+    const grows = rows.every((r, i) => i === 0 || r.got > rows[i - 1].got);
+    // 且**不再有 59 这个截断**：1e5000 必须远超 59 ✓
+    const notPinned = rows[3].got > 200;
+    const bad = rows.filter((r) => !r.lvOk || !r.affordable);
+    const ok = bad.length === 0 && grows && notPinned;
+    return {
+      ok,
+      detail: ok
+        ? `价格不封顶（每级 ×1e10）✓｜${rows.map((r) => `${r.p}⇒${r.got}级`).join("｜")}`
+          + ` ⇒ 池越大买越多、且**不再钉在 Lv59** ✓`
+        : `异常：${bad.map((r) => `${r.p} 探针${r.probe}/实买${r.got}/买得起${r.affordable}`).join("｜")}`
+          + `｜单调增长=${grows}｜不再钉死=${notPinned}(${rows[3].got})`,
+    };
+  });
+
+  // ② ZPE 引擎：2000 级后**每级都 ×mult**（逐级连乘）
+  //   ⚠️ `M` 必须在 `check()` 的**标题模板之前**取好 ——
+  //     标题是**立即求值**的，而回调体在其后才跑 ⇒ 在回调里声明会 `M is not defined` ✗
+  //   （我为此报了一次 ReferenceError）
+  const _zpeM = Number(ZPE_ENGINE.steepAfter?.mult ?? 1e9);
+  check(`★ ZPE 引擎：2000 级后**每级都 ×${_zpeM}**（每级 +${Math.log10(_zpeM).toFixed(0)} 个数量级）`, () => {
+    const r = Number(ZPE_ENGINE.costGrowth);
+    const M = _zpeM;
+    const L = ZPE_ENGINE.steepAfter?.level ?? 2000;
+    const step = (lv) => Number(ZPE_ENGINE.costGrowth) * zpeEngineStepMult(lv).toNumber();
+    // ⚠️ 容差用**相对**比较（绝对 `1e-3` 过于严苛：`r × 1e5` 在 double 上差几个 ppm）
+    //   ⚠️ 必须**先声明**再加使用（我第一版把它放在 `before` 之后 ⇒ TDZ `Cannot access 'rel'`）
+    const rel = (a, b) => Math.abs(a - b) / Math.abs(b) < 1e-6;
+    // 阈值下不变（零回归）：**1998 级及以前**每级仍是 ×costGrowth
+    //   ⚠️ `step(lv)` = 「买 `lv+1` 这一级要乘的倍率」= `ζ(lv+1)/ζ(lv) × r`
+    const before = [0, 500, 1000, 1997, 1998].every((lv) => rel(step(lv), r));
+    // ⚠️⚠️ **终稿判据**（用户第 3 次纠正：「不应该是当前价格基础上再 ×1e5 么？」）：
+    //   `ζ(lv) = 1`（lv < L）｜**`ζ(lv) = M^(lv−L+1)`**（lv ≥ L）——
+    //   ⇒ **逐级连乘**：2000 级起**每一级**都在当前价格上再 ×1e5 ✓
+    //     `价格(2000+n) = 价格(1999)·r^(n+1)·1e5^(n+1)`
+    //   ⚠️ 我前两版都只让它生效**一次**（ζ 取常数）⇒ 用户看到"说好的阈值升级呢" ✗
+    const jumpAtBuy2000 = rel(step(1999), r * M);            // 买到 Lv2000 这一步
+    const everyStepSteep = [2000, 2001, 2002, 2005, 2010].every((lv) => rel(step(lv), r * M));
+    const zetaAt2000 = zpeEngineCostMult(2000).eq(M);
+    const zetaCompounds = [2000, 2001, 2002, 2003].every((lv) =>
+      zpeEngineCostMult(lv).eq(new Decimal(M).pow(lv - L + 1)));
+    const noJumpBefore = [0, 1000, 1998, 1999].every((lv) => zpeEngineCostMult(lv).eq(1));
+    // ★ 实测"每级涨约 5 个数量级"（用户原话的**唯一硬指标**）
+    //   `zpeEngineCost(state)` = 从该级**买下一级**的价 ✓
+    const zpeAt = (lv) => ({ ...newState(), zpeEngineUnlocked: true, zpeEngineLevel: new Decimal(lv) });
+    const orders = (a, b) => zpeEngineCost(zpeAt(b)).log10().sub(zpeEngineCost(zpeAt(a)).log10()).toNumber();
+    const jumpOrders = orders(1999, 2000);
+    const perLevelOrders = [orders(2000, 2001), orders(2001, 2002), orders(2005, 2006)];
+    // ★ 每级要涨的数量级 = log10(costGrowth × mult)。
+    //   ⚠️ **不要写死 4.5~6.0** —— `mult` 是可调旋钮（用户已把它从 1e5 调到 **1e9**，
+    //     每级从 5.27 变成 **9.27** 个数量级）⇒ 写死会让"调旋钮"变成"改测试" ✗
+    //   ⇒ 从常数**推导**期望值，留 ±0.6 容差（`Decimal` 末位噪声）✓
+    const wantOrders = Math.log10(r * M);
+    const orderOk = (d) => Math.abs(d - wantOrders) < 0.6;
+    const jumpOk = orderOk(jumpOrders) && perLevelOrders.every(orderOk);
+    // 探针 == 逐级实买（闭式已换成累加 ⇒ 必须同源）
+    const rows = [];
+    for (const [pool, lv0] of [["1e28", 0], ["1e600", 0], ["1e2000", 1990], ["1e6000", 2005]]) {
+      const st = { ...newState(), zpeEngineUnlocked: true, zpeEngineLevel: new Decimal(lv0), infinityPoints: new Decimal(pool) };
+      const k = zpeEngineAffordableIn(st, new Decimal(pool));
+      const st2 = { ...newState(), zpeEngineUnlocked: true, zpeEngineLevel: new Decimal(lv0), infinityPoints: new Decimal(pool) };
+      let real = 0;
+      while (buyZpeEngineLevel(st2) > 0 && real < 30000) real++;
+      const total = zpeEngineTotalCost(lv0, lv0 + k);
+      const snap = new Decimal(pool).toString();
+      const spent = new Decimal(snap).sub(st2.infinityPoints);
+      // ⚠️⚠️ 这里的容差**必须**比别处宽 —— 原因是**测量方法**，不是实现：
+      //   循环里是**逐级买 `k` 次**（`k` 可达 2000+），每一次都是"池 − 单级价"，
+      //   **每一次的舍入都会累积**；然后再报成相对差时，又被"总价 vs 池子"的巨大尺度放大 ✗
+      //   实测（M=1e9）：1e600⇒**1.75e-5**｜1e2000⇒**2.24e-5**｜1e6000⇒3.5e-10｜1e3000⇒1.35e-7
+      //   （`k` 越大越差 ⇒ 与"累积次数"一致 ⇒ 确认是测量误差而非公式错）
+      //   ⇒ 取 `1e-3`：真实 bug（价格公式算错）是**数量级**级别的偏差，必然被抓到 ✓
+      //   ⚠️ 引擎自己的"买满"走 `zpeEngineTotalCost` **一次扣款** ⇒ 那条路径是精确的 ✓
+      const spendOk = spent.eq(total) || spent.div(total).sub(1).abs().lt(new Decimal("1e-3"));
+      rows.push({ pool, lv0, k, real, ok: k === real && spendOk });
+    }
+    const bad = rows.filter((x) => !x.ok);
+    // 原有标定不能被打破：1e28 池 ≈ 100 级
+    const calib = rows[0].real;
+    const calibOk = calib >= 90 && calib <= 110;
+    const allOk = before && jumpAtBuy2000 && zetaAt2000 && noJumpBefore && zetaCompounds
+      && everyStepSteep && jumpOk && bad.length === 0 && calibOk;
+    return {
+      ok: allOk,
+      detail: allOk
+        ? `1998 级及以前每级 ×${r} ✓｜**Lv2000 起每级都 ×${(r * M).toExponential(4)}**（= r×mult）✓｜`
+          + `ζ 逐级连乘（M^(lv−2000+1)）✓｜实测每级 +${perLevelOrders[0].toFixed(2)} 个数量级 ✓｜`
+          + `探针==实买==扣款（4 组）✓｜原标定 1e28⇒${calib} 级 ✓`
+        : `阈值前不变=${before}｜买Lv2000即×1e5=${jumpAtBuy2000}｜ζ(2000)=M=${zetaAt2000}｜`
+          + `ζ连乘=${zetaCompounds}｜之前不加罚=${noJumpBefore}｜之后每级×r×M=${everyStepSteep}｜`
+          + `每级数量级=${perLevelOrders.map((d) => d.toFixed(2)).join("/")}(应 ${wantOrders.toFixed(2)})｜` +
+          `${bad.map((x) => `${x.pool}@Lv${x.lv0} 探针${x.k}/实买${x.real}`).join("｜")}｜标定=${calibOk}(${calib})`,
+    };
+  });
+
   const bad = results.filter((x) => !x).length;
   pricePass += results.length - bad;
   priceFail += bad;
+
+  // ══════════════════════════════════════════════════════════
+  // ★★★ 2025：**性能回归断言**（用户实测「数字跳动速率及其低下」的产物）
+  // ══════════════════════════════════════════════════════════
+  // ⚠️ 必须放在**这个块内部** —— `check()` 是本块里的局部函数，
+  //    放外面会 ReferenceError（我第一版就放错了 ✗）
+  // 背景：`epMultAffordableIn` 曾因**循环上界过大**而在浏览器里 **80ms/次**，
+  //   而它**每帧被调用 2 次** ⇒ 直接吃掉整个帧预算，FPS 掉到 6、全页面卡顿 ✗
+  //   ⚠️ 我在 Node 里用**小池子**测过它，只有 0.03ms ⇒ **完全没暴露** ⇒
+  //     所以这条断言特意用**大池子**，并且**测时间**（不只是测值）✓
+  // ⚠️ 阈值与池子：**包含 1e10000**（用户指出「我可没说后续抵达不了 1e10000 这个阈值哦」）
+  //   ⇒ 断言必须覆盖那个量级，不能替游戏设上限 ✓
+  //   预算 20ms：Node 实测 1e10000 ⇒ **5.2ms**（余量 4×，慢机器也不误报）✓
+  //   ⚠️ 上界取 1e10000（≈5000 级）；再往上（1e100000 ⇒ 5 万级 / 50ms）属于
+  //      "池子比可达量级大 4 个数量级"的假想情形，不作为门槛 ✓
+  {
+    const PERF_BUDGET_MS = 20;
+    const CALLS = 20;
+    const perfRows = [];
+    const timeIt = (label, fn) => {
+      for (let i = 0; i < 3; i++) fn();                  // 预热
+      const t0 = performance.now();
+      for (let i = 0; i < CALLS; i++) fn();
+      const ms = (performance.now() - t0) / CALLS;
+      perfRows.push({ label, ms, ok: ms <= PERF_BUDGET_MS });
+    };
+    // 池子从小到大：**大池子是关键**（小池子发现不了这类 bug）
+    // ⚠️ **包含 1e10000** —— 用户明确说不可假定它到不了 ✓
+    for (const p of ["1e10", "1e100", "1e1000", "1e10000"]) {
+      timeIt(`epMultAffordableIn(0,${p})`, () => epMultAffordableIn(0, new Decimal(p)));
+    }
+    timeIt("ipDoubleAffordableIn(0,1e1000)", () => ipDoubleAffordableIn(0, new Decimal("1e1000")));
+    timeIt("ipDoubleCostFor(0,200)", () => ipDoubleCostFor({ ipDoubleLevel: 0 }, 200));
+
+    // ★★★ 2026 新增：**ZPE 引擎的价格函数**（这一条是真的踩到过 ✗）
+    //   背景：为了让 2000 级后的惩罚 `ζ` 正确，我把 `zpeEngineTotalCost` /
+    //     `zpeEngineAffordableIn` 从**等比闭式**改成了**逐级累加**——
+    //     数学上正确，但**复杂度 O(等级)**，而它们**在热路径上**：
+    //       · `ui.js` 的 ZPE 面板每帧显示引擎累计价
+    //       · `engineBonusMult()` 里调**两次**（分子/分母），UI 每帧又调它
+    //     ⇒ 实测 `zpeEngineTotalCost(0,2000)` = **3.9ms/次**、每帧 3~4 次
+    //       ⇒ 12~16ms/帧，而且**越往后越慢**（用户的性能图上就是
+    //         `zpeEngineTotalCost(0,等级) = 2.06 ms/次` 那一行）✗
+    //   ⇒ 现在改回**分段闭式**（ζ 是分段常数 ⇒ 段内仍是等比）：
+    //       3.9ms → 0.0038ms（**1035×**），且**与等级无关** ✓
+    //   预算 0.5ms：Node 实测 ≈ 0.004~0.01ms（余量 ≥ 50×）✓
+    //   ⚠️ 这条断言的意义：**把"热路径上不许有 O(n) 循环"变成机械判据** ✓
+    timeIt("zpeEngineTotalCost(0,5000)", () => zpeEngineTotalCost(0, 5000));
+    timeIt("zpeEngineTotalCost(0,2000)", () => zpeEngineTotalCost(0, 2000));
+    timeIt("zpeEngineAffordableIn(1e600)", () => zpeEngineAffordableIn(
+      { ...newState(), zpeEngineUnlocked: true, zpeEngineLevel: new Decimal(0), infinityPoints: new Decimal("1e600") },
+      new Decimal("1e600")));
+
+    // ★★★ 2026 新增：**闭式 == 逐级累加**（数学同源，不许分叉）✓
+    //   闭式快、循环慢但显然正确 ⇒ 两者必须在**所有区间**上一致，
+    //   否则"显示 ≠ 实扣"会再次出现（本项目踩过 4 次）✗
+    check("★ ZPE：分段闭式 == 逐级累加（含跨 2000 级的所有区间）", () => {
+      const cases = [[0, 1], [0, 100], [0, 1447], [0, 1999], [0, 2000], [0, 2001],
+        [0, 2500], [1990, 2010], [2000, 2500], [500, 900], [1999, 2001], [2500, 3000]];
+      const bad = [];
+      for (const [f, t] of cases) {
+        const cl = zpeEngineTotalCost(f, t);
+        const lp = zpeEngineTotalCostLoop(f, t);
+        const rel = lp.eq(0) && cl.eq(0) ? 0 : lp.div(cl).sub(1).abs().toNumber();
+        if (!(rel < 1e-10)) bad.push(`[${f},${t}] 闭式${cl.toString().slice(0, 12)} vs 循环${lp.toString().slice(0, 12)}`);
+      }
+      return {
+        ok: bad.length === 0,
+        detail: bad.length === 0
+          ? `${cases.length} 个区间（含跨 2000、纯段 2、大范围）相对差均 < 1e-10 ✓`
+          : `不一致：${bad.join("｜")}`,
+      };
+    });
+
+    // ★★★ 2026 新增：**闭式探针 == 逐级核减探针** ✓
+    check("★ ZPE：探针闭式 == 逐级核减（买几级必须完全一致）", () => {
+      const cases = [[0, "1e28"], [0, "1e300"], [0, "1e600"], [0, "1e2000"],
+        [1990, "1e2000"], [1990, "1e3000"], [2005, "1e6000"], [0, "1e545"], [2000, "1e551"]];
+      const bad = [];
+      for (const [lv, p] of cases) {
+        const st = { ...newState(), zpeEngineUnlocked: true, zpeEngineLevel: new Decimal(lv), infinityPoints: new Decimal(p) };
+        const cl = zpeEngineAffordableIn(st, new Decimal(p));
+        const lp = zpeEngineAffordableInLoop(lv, new Decimal(p));
+        if (cl !== lp) bad.push(`Lv${lv}/${p} 闭式${cl} vs 循环${lp}`);
+      }
+      return {
+        ok: bad.length === 0,
+        detail: bad.length === 0 ? `${cases.length} 个用例完全一致 ✓` : `不一致：${bad.join("｜")}`,
+      };
+    });
+
+    // ★★★ 2025 新增：**稳态（每帧重复问同一池子）必须几乎免费** ✓
+    //   背景（用户：「修！劳资的性能为什么要花在这个上面」）：
+    //     `epMultAffordableIn` **每帧被调用 2 次**，而绝大多数帧里池子没变
+    //     ⇒ 加了短期缓存（`epMultAffCache`）。这条断言锁住那个收益 ——
+    //       若有人删了缓存，这里会立刻报红 ✗
+    //   预算 0.05ms：Node 实测热路径 ≈ **0.0001~0.0007ms**（余量 ≥ 70×）✓
+    {
+      const STEADY_BUDGET_MS = 0.05;
+      const pool = new Decimal("1e10000");
+      epMultAffordableIn(0, pool);                       // 冷一次
+      const t0 = performance.now();
+      const N = 2000;
+      for (let i = 0; i < N; i++) epMultAffordableIn(0, pool);
+      const ms = (performance.now() - t0) / N;
+      check("★ 性能：稳态（同池子反复问）必须走缓存（≤ 0.05ms/次）", () => ({
+        ok: ms <= STEADY_BUDGET_MS,
+        detail: ms <= STEADY_BUDGET_MS
+          ? `池 1e10000 稳态 ${ms.toFixed(5)}ms/次 ✓（冷启动约 5ms ⇒ 缓存生效）`
+          : `稳态 ${ms.toFixed(3)}ms/次 —— **缓存没生效**（冷启动才是这个量级）✗`,
+      }));
+    }
+
+    const slow = perfRows.filter((r) => !r.ok);
+    const worst = perfRows.reduce((a, r) => (r.ms > a.ms ? r : a), perfRows[0]);
+    check(`★ 性能：每帧调用的探针必须便宜（≤ ${PERF_BUDGET_MS}ms/次，**大池子**重点测）`, () => ({
+      ok: slow.length === 0,
+      detail: slow.length === 0
+        ? `${perfRows.length} 项全部达标（最慢 ${worst.label} = ${worst.ms.toFixed(2)}ms）✓`
+        : `超预算：${slow.map((r) => `${r.label}=${r.ms.toFixed(1)}ms`).join("｜")}`,
+    }));
+  }
 }
-console.log();
+
+// ══════════════════════════════════════════════════════════
+// ★★★ 2026：**静态扫描 —— 热路径上不许出现 `*Loop` 系列**
+// ══════════════════════════════════════════════════════════
+// 背景（用户 2026 的性能图直接指出来）：
+//   为了修「ZPE 2000 级后的价格增幅」，我把 `zpeEngineTotalCost` 从**等比闭式**
+//   改成**逐级累加**。数学完全正确，但复杂度 **O(等级)**，而它在**热路径**上：
+//     · `ui.js` 的 ZPE 面板每帧显示引擎累计价
+//     · `engineBonusMult()` 调它**两次**（分子/分母），而 UI 每帧显示引擎加成
+//   ⇒ 实测 3.9ms/次 × 每帧 3~4 次 = **12~16ms/帧**，而且越往后越慢 ✗
+//
+// ⚠️ 这类回归**Node mock 抓不到**（mock 里 render 只有 2.4ms/帧，
+//    因为 mock 没有真实样式重算/布局）⇒ 必须用**静态判据**兜住 ✓
+{
+  const ROOT = join(new URL("..", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1"), "src");
+  const LOOP_FNS = ["zpeEngineTotalCostLoop", "zpeEngineAffordableInLoop"];
+  const offenders = [];
+  for (const f of readdirSync(ROOT)) {
+    if (!f.endsWith(".js")) continue;
+    if (f === "config.js") continue;                 // 定义处（含兜底调用）不算 ✓
+    const src = readFileSync(join(ROOT, f), "utf8");
+    for (const fn of LOOP_FNS) {
+      // 只看**非注释行**里的调用
+      const hit = src.split(/\r?\n/).some((line) => {
+        const t = line.trim();
+        if (t.startsWith("//") || t.startsWith("*") || t.startsWith("/*")) return false;
+        return new RegExp(`\\b${fn}\\s*\\(`).test(line);
+      });
+      if (hit) offenders.push(`${f} 调了 ${fn}`);
+    }
+  }
+  const ok = offenders.length === 0;
+  console.log("=".repeat(80));
+  console.log("  ★ 结构性守卫：热路径上不许有 O(n) 循环");
+  console.log("=".repeat(80));
+  if (ok) {
+    console.log("  ✅ `src/`（除 config.js 定义处）没有任何 `*Loop` 调用 —— 闭式在位 ✓");
+  } else {
+    console.log("  ❌ 发现 O(n) 循环被放进 src/：");
+    for (const o of offenders) console.log(`     · ${o}`);
+    console.log("     ⇒ 它们每帧会被调用 ⇒ 会直接吃掉帧预算（实测 3.9ms/次）✗");
+    priceFail++;
+  }
+  console.log();
+}
 
 console.log("=".repeat(80));
 console.log(`  结果：速率 ${pass} 一致 / ${fail} 不一致；其他 ${pricePass} 通过 / ${priceFail} 失败`);

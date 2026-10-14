@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>空想增量 0.6.18</title>
+<title>空想增量 0.7.1</title>
 <link rel="stylesheet" href="./css/amoled.css">
 <!--
   这里**不需要** <script src="dist/break_eternity.min.js"> 了。
@@ -20,6 +20,25 @@
     注意：这里必须用内联脚本，不能进 ./src/main.js —— 那段是 module，
     DOMContentLoaded 之后再加载会来不及在首帧更新标题（会闪一下旧值）。
   -->
+  <script>
+    // ══════════════════════════════════════════════════════════
+    // ★★★ 2025：**性能诊断开关**（用户报「数字跳动速率及其低下」）
+    // ══════════════════════════════════════════════════════════
+    // `wrapEl` 给每个元素的 textContent / classList 等装了拦截器（做"值没变就不写"）。
+    // 它**可能**在真实 V8 里制造"性能悬崖"（形态改变 ⇒ 属性访问变慢），
+    // 也可能完全无罪。**只有 A/B 才能定性** ⇒ 提供这个开关。
+    //
+    // 用法（控制台执行任一种，然后刷新）：
+    //   window.__NO_DOM_WRAP = true;  location.reload()   // 关掉拦截
+    //   delete window.__NO_DOM_WRAP;  location.reload()   // 恢复默认
+    // 或直接用 URL：`index.html?nowrap=1`
+    // 然后按 F8 看 HUD 的 render 数字对比 ✓
+    try {
+      if (new URLSearchParams(location.search).get("nowrap") === "1") {
+        window.__NO_DOM_WRAP = true;
+      }
+    } catch (_) { /* 老浏览器或缺 URLSearchParams 时忽略 */ }
+  </script>
   <script>
     fetch("./package.json")
       .then((r) => (r.ok ? r.json() : null))
@@ -41,7 +60,7 @@
 
   <!-- ══════════ 顶栏 ══════════ -->
   <div class="topbar">
-    <h1>空想增量 <small><span id="app-ver">0.6.18</span> · AMOLED</small></h1>
+    <h1>空想增量 <small><span id="app-ver">0.7.1</span> · AMOLED</small></h1>
     <div class="spacer"></div>
     <div class="tools">
       <button class="tool" id="btn-save">保存</button>
@@ -51,7 +70,53 @@
   </div>
 
   <div id="offline-banner" class="banner" hidden></div>
+  <!-- ★★★ 2025：**性能监视器**（用户报「数字跳动速率及其低下」⇒ 装仪表而不是猜）
+       默认隐藏；`F8` 或控制台 `__game.perf(true)` 打开 ✓ -->
+  <div id="perf-hud" hidden></div>
   <div id="fatal"></div>
+
+  <!-- ══════════════════════════════════════════════════════════
+       ★★★ 2025：**全页面悬浮重置窗**（用户要求）
+       「全页面悬浮的窗口，内含 无限/永恒/时空/梦想 四个重置按钮，
+         点击后会触发同对应页面下的资源获取。后两个暂时占位，
+         时空配色为黑白流动」
+
+       ── 设计要点 ──
+       · `position: fixed` ⇒ **滚动时也一直在**（"全页面悬浮"）✓
+       · 四个按钮**与页面上的那个按钮走同一个 handler**（唯一实现，不可能脱节）✓
+       · 后两个（时空 / 梦想）**暂时禁用 + 标 "占位"**：
+         点不动、且有明显视觉区分 ⇒ 不会让玩家以为"点了没反应是 bug"✗
+         ⚠️ 时空是**黑白流动**（用户指定配色，先说过"闪烁"、后更正为"流动"）——
+            它是本作的**下一层重置**，目前 config 里**没有这个机制**，所以只能占位 ✓
+       · 可拖动 / 可折叠（见 css 的 `#float-resets`）——
+         悬浮窗挡内容会很烦，必须能挪开 ✓
+       ══════════════════════════════════════════════════════════ -->
+  <div id="float-resets" class="float-resets">
+    <div class="fr-head">
+      <span class="fr-title">重置</span>
+      <button class="fr-min" id="fr-min" type="button" title="折叠 / 展开">−</button>
+    </div>
+    <div class="fr-body">
+      <button class="fr-btn zone" id="fr-btn-infinity" style="--zone:var(--infinity)" type="button">
+        <span class="fr-name">无限</span>
+        <span class="fr-sub" id="fr-sub-infinity">大坍缩</span>
+      </button>
+      <button class="fr-btn zone" id="fr-btn-eternity" style="--zone:var(--eternity)" type="button">
+        <span class="fr-name">永恒</span>
+        <span class="fr-sub" id="fr-sub-eternity">需 1e308.25 无限点</span>
+      </button>
+      <!-- 时空：占位。黑白**流动**配色（用户指定） -->
+      <button class="fr-btn fr-placeholder fr-st-flow" id="fr-btn-spacetime" type="button" disabled>
+        <span class="fr-name">时空</span>
+        <span class="fr-sub">占位</span>
+      </button>
+      <!-- 梦想：占位（等机制定稿） -->
+      <button class="fr-btn fr-placeholder" id="fr-btn-dream" type="button" disabled>
+        <span class="fr-name">梦想</span>
+        <span class="fr-sub">占位</span>
+      </button>
+    </div>
+  </div>
 
   <!-- ══════════ 资源条 ══════════ -->
   <div class="resources">
@@ -146,9 +211,17 @@
               <button class="flyout-item" data-tab="zpe" id="flyout-void-zpe">真空零点能引擎</button>
             </div>
           </div>
-          <button class="tab" id="tab-de" data-tab="de" style="--zone:#b388ff">
-            <span class="dot"></span>暗能量<span class="tag" id="tab-tag-de">锁</span>
-          </button>
+          <!-- ★★★ 2026（设计稿第 50 行「在暗能量下提供第二个子页面：暗物质」）：
+               暗能量也改成**两个子页**，形制与虚空科技/无限/主控台完全一致。 -->
+          <div class="tab-wrap" id="tab-wrap-de">
+            <button class="tab" id="tab-de" data-tab="de" style="--zone:#b388ff">
+              <span class="dot"></span>暗能量<span class="tag" id="tab-tag-de">锁</span>
+            </button>
+            <div class="tab-flyout" id="tab-flyout-de">
+              <button class="flyout-item" data-tab="de" id="flyout-de-core">相变仪 / 里程碑</button>
+              <button class="flyout-item" data-tab="darkm" id="flyout-de-darkm">暗物质</button>
+            </div>
+          </div>
           <button class="tab" id="tab-quantum" data-tab="quantum" style="--zone:#ff3b30">
             <span class="dot"></span>量子<span class="tag" id="tab-tag-quantum">锁</span>
           </button>
@@ -163,9 +236,17 @@
           </div>
           <!-- ★ 永恒：先**只保留标签页**（和当初开发无限层一样），内容等设计定了再填。
                颜色用 --eternity（#673ab7 紫）：新层，不是新乘区。 -->
-          <button class="tab" id="tab-eternity" data-tab="eternity" style="--zone:var(--eternity)">
-            <span class="dot"></span>永恒<span class="tag" id="tab-tag-eternity">锁</span>
-          </button>
+          <!-- ★★★ 2026：永恒也改成**两个子页**（形制与虚空/无限/主控台/暗能量一致）：
+               永恒本体（升级 · 里程碑） ＋ **七巧板**（`em8` 之后的新层，**机制待做**、先建骨架） -->
+          <div class="tab-wrap" id="tab-wrap-eternity">
+            <button class="tab" id="tab-eternity" data-tab="eternity" style="--zone:var(--eternity)">
+              <span class="dot"></span>永恒<span class="tag" id="tab-tag-eternity">锁</span>
+            </button>
+            <div class="tab-flyout" id="tab-flyout-eternity">
+              <button class="flyout-item" data-tab="eternity" id="flyout-eternity-core">永恒升级 · 里程碑</button>
+              <button class="flyout-item" data-tab="tangram" id="flyout-eternity-tangram">七巧板</button>
+            </div>
+          </div>
         </div>
 
         <div class="tab-panel" id="panel-console">
@@ -425,8 +506,16 @@
           </div>
 
           <div id="zpe-engine-content" hidden>
+            <!-- ★★★ 2025（用户裁定：「让 ui 的描述完全符合真实的」）：
+                 原来这句写「价格 **5 × (等级+1)³**（三次方…）**100 / 1000 / 10000** 级起各再抬一次涨价斜率」
+                 —— **整句都是旧的**（三次方价格与分段斜率都已被指数价格取代）✗
+                 真实（`config.js` 的 `ZPE_ENGINE` / `zpeEngineCost`）：
+                   价格 = **5 × 1.872483^当前等级**（每级固定 ×1.872483，**指数**）
+                   标定：1e28 池 ≈ 100 级｜1e40 ≈ 144 级｜1e100 ≈ 342 级
+                 ⚠️ 数字**不写死在这里**（会再次脱节）—— 由 ui.js 从 `ZPE_ENGINE` 渲染 ✓ -->
             <p class="rule">
-              解锁 <b>1 次大坍缩</b>（并赠送 1 级，不花无限点）｜价格 <b>5 × (等级+1)³</b>（三次方：越买越贵，但不再指数爆炸）<b>100 / 1000 / 10000</b> 级起各再抬一次涨价斜率
+              解锁 <b>1 次大坍缩</b>（并赠送 1 级，不花无限点）｜价格 <b id="zpe-price-shape">5 × 1.872483^等级</b>
+              （每级固定倍率，<b>指数</b>增长）<span id="zpe-price-anchor"></span>
             </p>
 
             <div class="detail" style="margin-bottom:12px">
@@ -459,8 +548,14 @@
             -->
             <p class="note">
               ①②③④ 只改产出的<b>高度</b>；<b>⑤ 改形状</b>——整个 a区括号取幂
-              （<code>{ 前四条 } ^ k</code>，k 由等级给、1 → 26 单调饱和）。
+              （<code>{ 前四条 } ^ k</code>）。
               红线：环增益 &lt; 1 ｜ k 单调有界（各由 lab 断言守住）。
+              <!-- ★★★ 2025（用户裁定：「让 ui 的描述完全符合真实的」）：
+                   原文写「k 由等级给、**1 → 26** 单调饱和」—— **26 是旧值** ✗
+                   真实（`config.js` 的 `matterTotalExponent` + `MATTER_B_KNEE` / `MATTER_B_KMAX`）：
+                     `k = 1 + 5·x/(1+x)`，`x = 等级/100` ⇒ **1 → 6** 单调饱和（等级 100 时 k=3.5）
+                   ⇒ 具体数字由 ui.js 从常量渲染（见下方 `zpe-k-shape`）✓ -->
+              <span id="zpe-k-shape"></span>
             </p>
             <!-- ★ 2025：「自动化状态」已移到**主控台 → 梦想（自动化）子页** ✓
                  （用户裁定子页归属；留在这里会与那一页**重复 id** ✗）-->
@@ -515,25 +610,96 @@
           </div>
         </div>
 
+        <!-- ══ 面板：暗物质（暗能量的第二个子页，2026；设计稿第 50~52 行）══ -->
+        <!-- ⚠️ 本面板**不许出现 emoji 字符**（图标只用 HTML 实体）—— dom-smoke 有守卫 ✓ -->
+        <div class="tab-panel" id="panel-darkm" hidden>
+          <div id="darkm-locked" class="locked">
+            <span class="big">&#127761;</span>
+            <span id="darkm-locked-title">暗物质未解锁</span>
+            <div class="cond" id="darkm-unlock-cond">需要达成永恒里程碑 em4（第 4 次永恒）</div>
+          </div>
+
+          <div id="darkm-content" hidden>
+            <p class="rule">
+              消耗 <b>永恒点</b> 获取 <b>暗物质</b>；暗物质经 <b>第二台相变仪</b> 把暗能量转化为
+              <b>额外的暗能量倍率</b>（落在加法区）
+            </p>
+
+            <div class="detail" style="margin-bottom:12px">
+              <div><span>暗物质个数</span><b id="darkm-count" class="glow-etern">0</b></div>
+              <div><span>下一个价格</span><b id="darkm-price">—</b></div>
+              <div><span>当前永恒点</span><b id="darkm-ep">0</b></div>
+              <div><span>一次能买</span><b id="darkm-afford">0</b></div>
+            </div>
+
+            <!-- ★★★ 2026：**第二台相变仪的动态环** —— 形制与第一台（`de-ring-*`）
+                 完全一致：`r=42` ⇒ 周长 263.9，填充由 `strokeDashoffset` 行内驱动。
+                 ⚠️ 环的**含义不同**，所以标签要写清楚：
+                   第一台 = 「攒够 1e8 ZPE 就转换一次」的**累积进度**；
+                   第二台**没有累加器**（转化是瞬时的）⇒ 环显示的是
+                   **当前转化值相对效果封顶的对数进度**（0% = 本轮余额还没长起来，
+                   100% = 撞上 effectCap）。它**每次大坍缩都会归零重扫** ✓ -->
+            <div class="ring-row">
+              <div class="ring-wrap" id="darkm-ring-wrap">
+                <svg class="ring" viewBox="0 0 100 100" aria-hidden="true">
+                  <circle class="ring-track" cx="50" cy="50" r="42" fill="none"></circle>
+                  <circle class="ring-fill" id="darkm-ring-fill" cx="50" cy="50" r="42" fill="none"></circle>
+                </svg>
+                <div class="ring-label"><b id="darkm-ring-pct">0%</b></div>
+              </div>
+              <div class="ring-info">
+                <div><span>第二台相变仪</span><b>暗能量 → 暗能量倍率</b></div>
+                <div><span>转速 v2</span><b id="darkm-speed">—</b></div>
+                <div><span>转化效率</span><b id="darkm-eff">—</b></div>
+                <div><span>转化进度</span><b id="darkm-ring-progress">—</b></div>
+              </div>
+            </div>
+
+            <div class="detail" style="margin-bottom:12px">
+              <div><span>转化值上限</span><b id="darkm-target">×1.00</b></div>
+              <div><span>当前转化值</span><b id="darkm-effect" class="glow-etern">×1.00</b></div>
+              <div><span>加进加法区</span><b id="darkm-term">+0.00</b></div>
+            </div>
+
+            <div class="btn-row">
+              <button class="btn zone" id="btn-darkm" style="--zone:#b388ff" disabled>
+                <span class="btn-name">获取暗物质</span>
+                <span class="btn-lv" id="darkm-status">需要 1 永恒点</span>
+                <div class="btn-desc">消耗永恒点获取 1 个（价格逐级 ×3）</div>
+                <div class="btn-cost" id="darkm-cost">花费 1 永恒点</div>
+              </button>
+              <button class="btn-max" id="btn-max-darkm" title="一次买满（逐级真价之和）">
+                <span class="n" id="max-darkm-n">0</span>买满
+              </button>
+            </div>
+
+            <p class="note">
+              第二台相变仪的速度 = <b>第一台速率的 ^0.01</b> × <b>暗物质个数 ^0.25</b>。
+              0.01 次方是「压缩机」—— 第一台速率再大，第二台的速度也只在 1~1000 之间。
+              转化效率 = <b>速度 ÷ 效率基准</b>（封顶 100%）；效率越高，能把暗能量转出的倍率越多。
+            </p>
+            <p class="note">
+              <b>转化值上限</b>由当前 <b>暗能量余额</b> 与暗物质个数共同决定（余额越深、个数越多 ⇒ 上限越高）。
+              它<b>只在本轮有效</b>：大坍缩 / 永恒会把暗能量余额重置，上限随之回到起点。
+            </p>
+          </div>
+        </div>
+
         <!-- ══ 面板：量子（红色）══ -->
         <div class="tab-panel" id="panel-quantum" hidden>
 
-          <div id="q-locked" class="locked">
-            <span class="big">&#9883;</span>
-            <span id="q-locked-title">量子系统未解锁</span>
-            <div class="cond">
-              <div>需要基础物质达到 <b id="q-need">1e25</b></div>
-              <div style="margin-top:6px">真空零点能每达到一个门槛，就捕获一对<b>量子</b></div>
-            </div>
-            <!-- ★★ 2025：**已解锁过**（第一次永恒之后）的说明 ——
-                 页面不再上锁，只是本轮还没推进到门槛。由 renderQuantum 控制显隐。
-                 没有这一段的话，玩家会看到"未解锁"而以为自己丢了进度 ✗ -->
-            <div class="cond" id="q-perma-hint" hidden style="margin-top:8px">
-              <div><b>已解锁过</b>：本轮重新攒到 <b>1e25</b> 基础物质即可继续使用（进度不丢）</div>
-            </div>
-          </div>
+          <!-- ══════════════════════════════════════════════════════════
+               ★★★ 2025（用户裁定）：「还是解锁问题……你要不还是给这个页面
+                 （**包括无限对应的锁定页面**）删了吧，bug 还在」
+                 ⇒ **量子 / 无限 / 永恒 三页的"未解锁/待推进"整块删除**，
+                   内容**常显**（`hidden` 只留给下面那条提示条自己）✓
+               ⚠️ 为什么这样对：永恒会重置这些条件，而"本轮还没到"**不等于**"没解锁"
+                  ⇒ 每次永恒后玩家都会看到一堵"你需要 XX"的墙，而机制本身没坏 ✗
+                  ⇒ 提示条只说明"本轮还要做到什么"，永不遮挡内容 ✓
+               ══════════════════════════════════════════════════════════ -->
+          <p class="note" id="q-hint" hidden></p>
 
-          <div id="q-content" hidden>
+          <div id="q-content">
             <div class="quantum-head">
               <div>
                 <div class="k">量子 Quantum</div>
@@ -583,11 +749,25 @@
             </div>
             <p class="rule" id="span-state">状态：未开启（需先买「门槛压平」）</p>
             <p class="rule">
-              k = min(1 + 0.5165·<b>√量子个数</b>, <b>6.1651</b>)｜物质产出 ×(暗能量 / 基准)^k
+              k = min(1 + 0.5165·<b>√量子个数</b>, <b id="span-kmax">6.1651</b>)｜物质产出 ×(暗能量有效量 / 基准)^k
             </p>
+            <!-- ★★★ 2025（用户裁定：「让 ui 的描述完全符合真实的」）：
+                 原来这两句**都是错的** ✗
+                   · 「购买瞬间记下当时的暗能量水位作为基准」
+                     → 真实：基准在**解锁 ZPE 引擎那一刻**就记下了（`unlockZpeEngine`，
+                       且只记一次）；「门槛压平」只是**开关**（`thresholdFlatBought`）
+                       ⇒ 所以"引擎到手 → 买到开关"期间 DE 的增长**全部**算进跨度 ✓
+                   · 「暗能量到 1e50 时 k 封顶把它放大到 1e308」
+                     → 真实：用的是**有效量** `DE_EFF_CAP = { knee:300, span:60 }`
+                       ⇒ 上界 360 阶；而**实测 DE 只到 150~167 阶** ⇒ **该软上限从未生效** ✗
+                       ⇒ 这句话彻底删掉，改由 ui.js 渲染当前真实状态（见 `span-state` / `span-de`）✓
+                 ⇒ 具体数字一律由 ui.js 从常量渲染，**不在这里写死** ✗ -->
             <p class="note">
-              开关 = 无限升级「<b>门槛压平</b>」（需先打破无限）；购买瞬间记下当时的暗能量水位作为基准，
-              所以开启那一刻乘数恰好为 1。暗能量到 <b>1e50</b> 时 k 封顶把它放大到 <b>1e308</b>。
+              开关 = 无限升级「<b>门槛压平</b>」（需先打破无限）。
+              <b>基准</b>在<b>解锁 ZPE 引擎那一刻</b>就已记下（且只记一次）——
+              所以从引擎到手到买下开关，这段时间暗能量的增长<b>全部</b>算进跨度。
+              乘数用的是暗能量的<b>有效量</b>（越过软上限后渐近饱和，见
+              <code>DE_EFF_CAP</code>）；<b>当前水位与状态见上面两行</b>。
             </p>
             <p class="note">
               每捕获一对，上面五项各涨一次。量子在大坍缩时清零（累计对数保留）。
@@ -606,20 +786,16 @@
         <!-- ══ 面板：无限（金色）══ -->
         <div class="tab-panel" id="panel-infinity" hidden>
 
-          <div id="inf-locked" class="locked">
-            <span class="big">&#8734;</span>
-            <span id="inf-locked-title">无限系统未解锁</span>
-            <div class="cond">需要基础物质达到 <b id="inf-need">1e308.2547</b></div>
-            <!-- ★★ 2025：**已解锁过**（第一次永恒之后）的说明；由 renderInfinity 控制显隐 -->
-            <div class="cond" id="inf-perma-hint" hidden style="margin-top:8px">
-              <div><b>已解锁过</b>：本轮重新推进到物质硬顶即可继续（进度不丢）</div>
-            </div>
-          </div>
+          <!-- ★★★ 2025（用户裁定）：**锁定块已删除**，内容常显（见量子页的说明） ✓ -->
+          <p class="note" id="inf-hint" hidden></p>
 
-          <div id="inf-content" hidden>
-            <!-- 规则行（模仿 0.3.4 的箭头短句：一句话说清"什么会触发什么"） -->
+          <div id="inf-content">
+            <!-- 规则行（模仿 0.3.4 的箭头短句：一句话说清"什么会触发什么"）
+                 ★ 2025：把"本轮还要多少物质"补进这一行 —— 原来那句在**锁定块**里，
+                   删掉锁定块后不能丢信息（用户要「让 ui 的描述完全符合真实的」）✓ -->
             <p class="rule">
-              <b id="bigcrunch-need">1e308.25</b> 物质 → <b>强制大坍缩</b>｜打破无限后转为<b>手动</b>，收益随深度递增
+              <b id="bigcrunch-need">1.80e308</b> 物质 → <b>强制大坍缩</b>｜打破无限后转为<b>手动</b>，收益随深度递增
+              <span id="inf-progress"></span>
             </p>
 
             <div class="detail" style="margin-bottom:12px">
@@ -709,27 +885,87 @@
           <div id="ic-host"></div>
         </div>
 
-        <!-- ══ 面板：永恒（★ 先占位：只保留标签页与解锁条件，内容等设计定了再填）══ -->
-        <div class="tab-panel" id="panel-eternity" hidden>
+        <!-- ══ 面板：七巧板（永恒的子页；★★ 机制**尚未实现** —— 本页只是骨架，见 docs/TANGRAM.md）══ -->
+        <!-- ⚠️ 本面板**不许出现 emoji 字符**（图标只用 HTML 实体）—— dom-smoke 有守卫 ✓ -->
+        <div class="tab-panel" id="panel-tangram" hidden>
+          <p class="rule">
+            <b>七巧板</b>：与 <b>em8（永恒自动化）</b> 同时解锁 ｜
+            用板块<b>覆盖</b>正方形三条线的比例换取加成（边 / 点 / 面覆盖都算）
+          </p>
+          <p class="note" id="tangram-hint"></p>
 
-          <div id="eternity-locked" class="locked">
-            <span class="big">&#8734;&#8734;</span>
-            <span id="eternity-locked-title">永恒未解锁</span>
-            <div class="cond">
-              <div>需要无限点达到 <b id="eternity-need">1e308.25</b></div>
-              <div style="margin-top:6px">当前 <b id="eternity-have">0</b></div>
+          <!-- 2026 用户指定版式：左右布局 ——
+               左 = 坐标轴（目标正方形 ＋ 三条线 ＋ 覆盖率）｜右 = 巧板托盘（约占 15%）
+               注意：原点在正方形左下角；SVG 的 y 轴向下 ⇒ 左下 = (0,100) -->
+          <div class="tangram-wrap">
+            <div class="tangram-board">
+              <svg class="tangram-svg" viewBox="-3 -3 106 106" aria-hidden="true">
+                <rect class="tg-frame" x="0" y="0" width="100" height="100"></rect>
+                <!-- 三条轴：左边缘 / 下边缘 / 左下→右上 主对角线 -->
+                <line class="tg-axis" x1="0" y1="100" x2="0" y2="0"></line>
+                <line class="tg-axis" x1="0" y1="100" x2="100" y2="100"></line>
+                <line class="tg-axis" x1="0" y1="100" x2="100" y2="0"></line>
+                <!-- 覆盖率高亮：由 JS 用 stroke-dasharray / dashoffset 驱动
+                     现在恒为 0（stroke-dashoffset = 全长）—— 机制未实现，不假装有覆盖 -->
+                <line class="tg-cov" id="tg-cov-vert" x1="0" y1="100" x2="0" y2="0"
+                      stroke-dasharray="100 100" stroke-dashoffset="100"></line>
+                <line class="tg-cov" id="tg-cov-horz" x1="0" y1="100" x2="100" y2="100"
+                      stroke-dasharray="100 100" stroke-dashoffset="100"></line>
+                <line class="tg-cov" id="tg-cov-diag" x1="0" y1="100" x2="100" y2="0"
+                      stroke-dasharray="141.42 141.42" stroke-dashoffset="141.42"></line>
+              </svg>
+              <div class="tangram-axes">
+                <div><span>纵轴 · 左边缘</span><b id="tangram-cov-vert">—</b></div>
+                <div><span>横轴 · 下边缘</span><b id="tangram-cov-horz">—</b></div>
+                <div><span>斜轴 · 主对角线</span><b id="tangram-cov-diag">—</b></div>
+                <div><span>当前进度</span><b id="tangram-progress">—</b></div>
+              </div>
             </div>
-            <!-- ★★ 2025：**已解锁过**（第一次永恒之后）的说明 ——
-                 永恒页不再上锁，只是本轮 IP 还没攒回门槛。由 render 控制显隐。
-                 （用户实测反馈：「我的永恒页面也被重置了」） -->
-            <div class="cond" id="eternity-perma-hint" hidden style="margin-top:8px">
-              <div><b>已解锁过</b>：本轮重新攒到门槛即可再永恒（永恒点与进度不丢）</div>
+
+            <div class="tangram-tray">
+              <div class="tangram-tray-title">巧板托盘</div>
+              <div class="tangram-slots">
+                <div class="tangram-slot">大三角</div>
+                <div class="tangram-slot">大三角</div>
+                <div class="tangram-slot">中三角</div>
+                <div class="tangram-slot">小三角</div>
+                <div class="tangram-slot">小三角</div>
+                <div class="tangram-slot">正方形</div>
+                <div class="tangram-slot">平行四边形</div>
+              </div>
             </div>
           </div>
 
-          <div id="eternity-content" hidden>
+          <h2>三条轴（覆盖率 → 加成）</h2>
+          <div class="detail" style="margin-bottom:12px">
+            <div><span>纵轴 · 左边缘</span><b>免费 ZPE 引擎 10 → 10000 级</b></div>
+            <div><span>横轴 · 下边缘</span><b>熵→粒子 10:1 → 1:1e13</b></div>
+            <div><span>斜轴 · 主对角线</span><b>计数频率 每级 +5% → 5000%</b></div>
+          </div>
+
+          <h2>拼装挑战</h2>
+          <div class="detail" style="margin-bottom:12px">
+            <div><span>解锁条件</span><b id="tangram-chal-need">阈值待定（代办）</b></div>
+            <div><span>进度</span><b id="tangram-chal-progress">—</b></div>
+          </div>
+
+          <p class="note">
+            本页是<b>骨架</b>：拼装（旋转 R / 翻转 F / 吸附）· 概率获取 · 拼装挑战<b>均未实现</b> ——
+            拼装挑战**走阈值逻辑**（与其它层一致），但**图案与阈值均未定** ⇒ 暂列为代办。
+            设计与待定项见 <b>docs/TANGRAM.md</b> §0.2 / §0.3。
+          </p>
+        </div>
+
+        <!-- ══ 面板：永恒（★ 先占位：只保留标签页与解锁条件，内容等设计定了再填）══ -->
+        <div class="tab-panel" id="panel-eternity" hidden>
+
+          <!-- ★★★ 2025（用户裁定）：**锁定块已删除**，内容常显（见量子页的说明） ✓ -->
+          <p class="note" id="eternity-hint" hidden></p>
+
+          <div id="eternity-content">
             <p class="rule">
-              无限点 <b>1e308.25</b> → <b>永恒</b>（手动触发）｜永恒点 = <b>5^(log10(IP)/308 − 0.7)</b>
+              无限点 <b id="eternity-need-inline">1.00e280</b> → <b>永恒</b>（手动触发）｜永恒点 = <b>5^(log10(IP)/308 − 0.7)</b>
+              <span id="eternity-progress"></span>
             </p>
             <div class="detail" style="margin-bottom:12px">
               <div><span>永恒点</span><b id="val-eternity" class="glow-etern">0</b></div>
@@ -740,7 +976,7 @@
               <button class="btn zone" id="btn-eternity" style="--zone:var(--eternity)" disabled>
                 <div class="btn-row">
                   <span class="btn-name">永恒</span>
-                  <span class="btn-lv" id="eternity-status">需要 1e280 无限点</span>
+                  <span class="btn-lv" id="eternity-status">需要 1e308.25 无限点</span>
                 </div>
                 <div class="btn-desc">重置 ∞ 层及以下 → 获得永恒点（公式同 AD）</div>
               </button>
@@ -832,7 +1068,7 @@
   }, true);
 </script>
 
-<script type="module" src="./src/main.js"></script>
+<script type="module" src="./src/main.js?v=0.7.1"></script>
 
 </body>
 </html>

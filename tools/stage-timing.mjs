@@ -58,6 +58,39 @@ const fH = (sec) => (sec == null ? "—" : sec < 60 ? `${sec.toFixed(0)} 秒`
   : sec < 3600 ? `${(sec / 60).toFixed(1)} 分` : `${(sec / 3600).toFixed(2)} 小时`);
 
 /**
+ * ★ 2026：**贪心玩家的"一帧操作"** —— 从 `runStages` 里**原样抽出来**，供别的 lab 复用。
+ *
+ * ⚠️ 为什么抽出来：`tools/dark-matter-lab.mjs` 需要跑**多轮永恒**的模拟，
+ *   它必须用**同一套**玩家策略，否则两边的时长读数不可比
+ *   —— 本项目最忌讳「同一语义两处实现 ⇒ 改一处忘一处」✗
+ * ⇒ 行为与抽出前**逐字一致**（`runStages` 只是改成了调它）✓
+ * @param {object} s 状态（原地修改）
+ */
+export function greedyPlay(s) {
+  if (s.resources.traps.lt(3) || s.resources.entropy.lt(1)) for (let i = 0; i < 10; i++) doClick(s);
+  for (const id of Object.keys(REPEATABLE)) buyRepeatable(s, id, true);
+  buyTrap(s, true);
+  for (const id of Object.keys(VOID_UPGRADES)) buyVoidUpgrade(s, id);
+  for (const id of Object.keys(DE_UPGRADES)) buyDeUpgrade(s, id);
+  for (const d of DREAM_UPGRADES) buyDreamUpgrade(s, d.id);
+
+  if (!s.brokenInfinity && s.infinityPoints.gte(BREAK_INFINITY.unlockCost)) breakInfinity(s);
+  const singles = INFINITY_ORDER
+    .filter((id) => !INFINITY_UPGRADES[id].repeatable)
+    .sort((a, b) => (INFINITY_UPGRADES[a].cost ?? 0) - (INFINITY_UPGRADES[b].cost ?? 0));
+  for (const id of singles) buyInfinityUpgrade(s, id);
+  for (let i = 0; i < 20 && buyInfinityUpgrade(s, "ipDouble").ok; i++) { /* ① */ }
+  // 本轮新机制
+  unlockZpeEngine(s);
+  buyZpeEngineLevel(s, true);
+
+  // 打破无限后：过载压到 5% 就收（和已归档的 infinity-sim 同策略）
+  if (shouldCrunch(s)) {
+    doBigCrunch(s);
+  }
+}
+
+/**
  * 跑一次完整仿真，返回每个阶段的**首次达成时刻**（秒）。
  *
  * 阶段按"游戏内容"切，而不是按代码模块 —— 表要能直接回答"哪一段超长"。
@@ -82,28 +115,8 @@ export function runStages(hours = HOURS, dt = DT) {
   let t = 0;
   const limit = hours * 3600;
   while (t < limit) {
-    // ── 玩家操作（贪心）──
-    if (s.resources.traps.lt(3) || s.resources.entropy.lt(1)) for (let i = 0; i < 10; i++) doClick(s);
-    for (const id of Object.keys(REPEATABLE)) buyRepeatable(s, id, true);
-    buyTrap(s, true);
-    for (const id of Object.keys(VOID_UPGRADES)) buyVoidUpgrade(s, id);
-    for (const id of Object.keys(DE_UPGRADES)) buyDeUpgrade(s, id);
-    for (const d of DREAM_UPGRADES) buyDreamUpgrade(s, d.id);
-
-    if (!s.brokenInfinity && s.infinityPoints.gte(BREAK_INFINITY.unlockCost)) breakInfinity(s);
-    const singles = INFINITY_ORDER
-      .filter((id) => !INFINITY_UPGRADES[id].repeatable)
-      .sort((a, b) => (INFINITY_UPGRADES[a].cost ?? 0) - (INFINITY_UPGRADES[b].cost ?? 0));
-    for (const id of singles) buyInfinityUpgrade(s, id);
-    for (let i = 0; i < 20 && buyInfinityUpgrade(s, "ipDouble").ok; i++) { /* ① */ }
-    // 本轮新机制
-    unlockZpeEngine(s);
-    buyZpeEngineLevel(s, true);
-
-    // 打破无限后：过载压到 5% 就收（和已归档的 infinity-sim 同策略）
-    if (shouldCrunch(s)) {
-      doBigCrunch(s);
-    }
+    // ── 玩家操作（贪心）── ★ 2026：抽成 `greedyPlay()` 供别的 lab 复用（行为不变）
+    greedyPlay(s);
 
     { s._t = (s._t ?? 0) + dt; s._n = (s._n ?? 0) + 1;
       if (s._n % 200 === 0) {

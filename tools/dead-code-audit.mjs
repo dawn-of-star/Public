@@ -107,7 +107,11 @@ console.log();
  *   往它里面塞一个没人处理的假里程碑也会被漏掉。
  *
  * DREAM_UPGRADES 是真的泛化：dreamUpgradeEffects() 读 `d.effect.kind` 分发，
- * 状态用 `dreamUpgrades[d.id]` 查 —— 全程不出现字面量。
+ * 状态用 `dreamUpgrades[d.id]` 查。
+ * ★ 2025 补充：`offlineCap`（「离线时长扩展」）是**按 id** 处理的
+ *   （等级走 `dreamUpgradeLevelOf`，价格走 `dreamUpgradeCostAt`）⇒
+ *   `ui.js` 的 `buildDreamUpgrades` 里显式登记了它的 id（`REPEATABLE_DREAM`）✓
+ *   所以它**不需要**进这个白名单 —— 真没被处理时会正常报红 ✓
  */
 const GENERIC_GROUPS = new Set(["DREAM_UPGRADES"]);
 

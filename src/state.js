@@ -98,6 +98,16 @@ export function newState() {
     //    老存档里若还有它，反序列化时会被忽略（不报错 ✓）
     dreamAwarded: {},
     dreamUpgrades: {},
+    /**
+     * ★★★ 2025：**可重复梦想升级的等级**（首个 = 「离线时长扩展」= 离线时间上限）。
+     *
+     * 为什么单独一个字段（而不是把 `dreamUpgrades` 改成数字）：
+     *   `dreamUpgrades` 的布尔语义**已存档**（旧档只有 `true/false`）⇒
+     *   改成数字会破坏旧档反序列化 ✗
+     *   ⇒ 布尔保留（"买过没有"）+ 这个新字段记等级（"买到几级"）✓
+     *     两者由 `dreamUpgradeLevelOf()` 统一读取（旧档布尔 ⇒ 视为 1 级）✓
+     */
+    dreamUpgradeLevels: {},
     eternityCount: 0,
     eternityPoints: D(0),
     /**
@@ -118,6 +128,45 @@ export function newState() {
      */
     epMultLevel: 0,
     /**
+     * ★★★ 2026（第三层设计稿第 50~52 行）：**暗物质个数**（「永恒之后」的第一块）。
+     *
+     * ⚠️⚠️ **字段名刻意叫 `eternityDarkMatter`，不叫 `darkMatter`** —— 这是一个
+     *   **真实的撞车**（本文件 :472 就是证据）：
+     *   `darkMatter` 这个名字**属于已经删除的「临界坍缩 → 暗物质」体系**
+     *   （用户当年裁定「暗物质不应存在」，整套删除），而 `deserialize` 至今
+     *   **明文忽略**旧档里的 `raw.darkMatter` ✓
+     *   ⇒ 若复用同名：**任何删除前的老存档，其残留的 `darkMatter` 值
+     *      （可能几十）会被当成新机制的暗物质个数** ⇒ 白送一堆 ✗✗
+     *   ⇒ 换一个不可能撞车的名字；旧档的那个键**继续被忽略**（行为不变）✓
+     *
+     * 用**普通 Number**（不是 Decimal）——理由：
+     *   ① 它是**计数**（买第几个），语义与 `epMultLevel` 同级，不是货币量级；
+     *   ② 唯一用途是 `log10(1+n)`，而 `Decimal.toNumber()` 在巨量时会变 `Infinity`
+     *      ⇒ 用 Number 把这类越界风险**从根上消掉** ✓
+     *
+     * ⚠️ 它**不随永恒重置**（用户 2026 裁定）：它是用 **EP** 买来的**跨永恒资产**，
+     *    与 `epMultLevel` / 永恒里程碑同类；否则"第 4 次永恒解锁、第 5 次被清掉"
+     *    等于惩罚玩家 ✗ ⇒ `doEternity` 里**不要**清它 ✓
+     *    （这是"永恒重置除梦想系统外一切"这条铁律的**第二处明确例外** ——
+     *      第一处是 `epMultLevel`；两处都是用户逐次裁定出来的 ✓）
+     */
+    eternityDarkMatter: 0,
+    /**
+     * ★★★ 2026：**第一台相变仪速率的快照**（存 `log10(速率)`，普通 Number）。
+     *
+     * 为什么要快照：暗物质的转化值要乘进 `darkEnergyMultiplier` 的加法区，
+     *   而它需要 `v2 = v1^0.01`，其中 `v1 = darkEnergyRate()`。
+     *   ⚠️ 现算会成**循环调用**：
+     *     `darkEnergyRate → effectiveDarkEnergyGain → darkEnergyGainPerConversion`
+     *     `→ (买了 dm5) → darkEnergyMultiplier → v2 → darkEnergyRate` ✗
+     *   ⇒ 每帧由 `tick` 在算完暗能量之后写一次，`darkEnergyMultiplier` 只读它 ✓
+     *   （项目里 `zpeFixedMultiplier` 是同一个「快照」手法的先例）
+     *
+     * ⚠️ 刻意存 **log10**（不是原值）：`Decimal.toNumber()` 在巨量时是 `Infinity` ✗，
+     *   而 `v1^0.01 = 10^(0.01·log10 v1)` **只需要 log10** ⇒ 既省又不会溢出 ✓
+     */
+    v1Log10: 0,
+    /**
      * ★★★ 2025（`docs/NEKO.md` §7 / §10）：**好感度系统**（游戏原生，零依赖 SDK）。
      *
      * · `nekoAffinity`：当前好感度。规格 = 初始 **0**、范围 **[-100, 100]**、
@@ -132,6 +181,24 @@ export function newState() {
     infinityElapsed: 0,
   // ★ 2025: 本轮时长（秒）—— 收手判据按时间；每次大坍缩归零（见 engine.js）
   runElapsed: 0,
+    /**
+     * ★★★ 2025（**em7** 用）：**最快一次无限的耗时（秒）**。
+     *
+     * 定义：历次"本轮时长"（`infinityElapsed`，大坍缩时归零）的**最小值**。
+     *   `0` = 还没有任何一次完整的无限 ⇒ em7 视为未就绪（不能自动完成挑战）✓
+     *
+     * 为什么需要它：设计稿第 43 行说「无限挑战将**基于最快无限速度**自动依次完成」，
+     *   而代码里原本**没有这个读数**（只有"本轮时长"）⇒ 这里补上 ✓
+     *   ⚠️ 不重置：它是**历史记录**，与大坍缩/永恒的归零无关（永恒本来也不重置它）✓
+     */
+    fastestInfinitySec: 0,
+    /**
+     * ★★★ 2025（**em7** 用）：自动完成无限挑战的**累计计时器**（秒）。
+     *
+     * 每累计到 `fastestInfinitySec` 就自动过一关，然后把余数留下（不丢时间）✓
+     * ⚠️ 用"累计秒"而不是 wall clock ⇒ 离线结算（`advance()`）也会照常推进 ✓
+     */
+    icAutoTimer: 0,
     infinityFromQuantumBought: false,
     ipTimeAccrued: 0,
     ipTimeBought: false,
@@ -483,6 +550,9 @@ export function deserialize(raw) {
     ? Object.fromEntries(Object.entries(raw.speedBought).filter(([, v]) => v === true))
     : {};
   s.infinityElapsed = num(raw.infinityElapsed, 0);
+  // ★★★ 2025（em7）：最快一次无限的耗时 —— 旧档没有这个字段 ⇒ 回落 0（= 未就绪）✓
+  s.fastestInfinitySec = Math.max(0, num(raw.fastestInfinitySec, 0));
+  s.icAutoTimer = Math.max(0, num(raw.icAutoTimer, 0));
   s.ipTimeAccrued = num(raw.ipTimeAccrued, 0);
   s.zpeEngineUnlocked = bool(raw.zpeEngineUnlocked);
   s.zpeEngineLevel = dec(raw.zpeEngineLevel);
@@ -495,6 +565,16 @@ export function deserialize(raw) {
     : s.eternityPoints;
   // ★★★ 2025：永恒升级「永恒增幅」的等级（新字段；旧档没有 ⇒ 默认 0 ✓）
   s.epMultLevel = Math.max(0, num(raw.epMultLevel, 0));
+  // ★★★ 2026：暗物质**个数**（新字段 `eternityDarkMatter`；旧档没有 ⇒ 默认 0 ✓）
+  //   ⚠️⚠️ 读的是 `raw.eternityDarkMatter`，**不是** `raw.darkMatter` ——
+  //      后者属于**已删除**的「临界坍缩 → 暗物质」体系，本文件 :472 那一段明文忽略它 ✓
+  //      （复用同名 ⇒ 删除前的老存档会凭空得到暗物质 ✗，见字段说明）
+  //   ⚠️ 必须夹住（存档可被手改）：`Number(x) || 0` 把 NaN / 非数字打成 0，
+  //      再 `Math.max(0, floor(...))` 夹掉负数与小数 ⇒ 脏数据不可能把 log10 弄坏 ✓
+  s.eternityDarkMatter = Math.max(0, Math.floor(Number(num(raw.eternityDarkMatter, 0)) || 0));
+  // ★★★ 2026：第一台速率的 log10 快照（**纯运行期派生量**，每帧都会被重写）
+  //   ⇒ 旧档 / 脏数据一律回落 0；`num()` 已把 NaN / 非数字打成默认值 ✓
+  s.v1Log10 = num(raw.v1Log10, 0);
   // ★★★ 2025（`docs/NEKO.md` §7）：好感度（跨轮次长期进度；旧档默认 0 ✓）
   //   ⚠️ 必须夹到 [NEKO.min, NEKO.max]（存档可被手改 ⇒ 不夹的话指数会失控 ✗）
   s.nekoAffinity = Math.max(NEKO.min, Math.min(NEKO.max, num(raw.nekoAffinity, 0)));
@@ -513,6 +593,18 @@ export function deserialize(raw) {
   s.dreamUpgrades = raw.dreamUpgrades && typeof raw.dreamUpgrades === "object"
     ? Object.fromEntries(Object.entries(raw.dreamUpgrades).filter(([, v]) => v === true))
     : {};
+  // ★★★ 2025：**可重复梦想升级的等级**（首个 = 「离线时长扩展」）——
+  //   只接受正整数（夹掉 NaN / 负数 / 小数，防手改存档 ✗）
+  s.dreamUpgradeLevels = (() => {
+    const src = raw.dreamUpgradeLevels;
+    if (!src || typeof src !== "object") return {};
+    const out = {};
+    for (const [k, v] of Object.entries(src)) {
+      const n = Math.floor(Number(v));
+      if (Number.isFinite(n) && n > 0) out[k] = n;
+    }
+    return out;
+  })();
 
   // ── 梦想点成就表 ──
   s.dreamAwarded = raw.dreamAwarded && typeof raw.dreamAwarded === "object"
